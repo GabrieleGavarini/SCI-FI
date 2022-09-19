@@ -3,6 +3,7 @@ from torch.nn.modules import Sequential
 from torch.utils.data import DataLoader
 
 from tqdm import tqdm
+import numpy as np
 
 
 class OutputFeatureMapsManager:
@@ -23,7 +24,12 @@ class OutputFeatureMapsManager:
 
         # An integer that measures the size of a single batch in memory
         batch = next(iter(self.loader))[0]
-        self.batch_size = batch.nelement() * batch.element_size()
+        self.batch_memory_occupation = batch.nelement() * batch.element_size()
+
+        # An integer that measures the size weights in memory
+        parameters_memory_occupation_list = [parameter.nelement() * parameter.element_size()
+                                             for name, parameter in self.network.named_parameters()]
+        self.parameters_memory_occupation = np.sum(parameters_memory_occupation_list)
 
         # A dictionary of lists of tensor. Each entry in the dictionary represent a layer: the key is the layer name
         # while the value is a list contains a list of 4-dimensional tensor, where each tensor is the output feature map
@@ -38,33 +44,48 @@ class OutputFeatureMapsManager:
         # overhead required by the dict
         self.output_feature_maps_size = 0
 
+        # List containing all the registered forward hooks
+        self.hooks = list()
+
     def __get_layer_hook(self,
-                         layer_name: str):
+                         layer_name: str,
+                         save_to_cpu: bool):
         """
         Returns a hook function that saves the output feature map of the layer name
         :param layer_name: Name of the layer for which to save the output feature maps
+        :param save_to_cpu: Default True. Whether to save the output feature maps to cpu or not
         :return: the hook function to register as a forward hook
         """
         def save_output_feature_map_hook(_, in_tensor, out_tensor):
-            if layer_name in self.output_feature_maps_dict.keys():
-                self.output_feature_maps_dict[layer_name].append(out_tensor)
-            else:
-                self.output_feature_maps_dict[layer_name] = [out_tensor]
+            output_to_save = out_tensor.detach().cpu() if save_to_cpu else out_tensor.detach()
 
-            self.output_feature_maps_dict_size += out_tensor.nelement() * out_tensor.element_size()
+            if layer_name in self.output_feature_maps_dict.keys():
+                self.output_feature_maps_dict[layer_name].append(output_to_save)
+            else:
+                self.output_feature_maps_dict[layer_name] = [output_to_save]
+
+            self.output_feature_maps_dict_size += output_to_save.nelement() * output_to_save.element_size()
 
         return save_output_feature_map_hook
 
     def save_intermediate_layer_outputs(self,
-                                        target_layers_names: list = None) -> None:
+                                        target_layers_names: list = None,
+                                        save_to_cpu: bool = True) -> None:
         """
         Save the intermediate layer outputs of the network for the given dataset, saving the resulting output as a
         dictionary, where each entry corresponds to a layer and contains a list of 4-dimensional tensor NCHW
         :param target_layers_names: Default None. A list of layers name. If None, save the intermediate feature maps of
         all the layers that have at least one parameter. Otherwise, save the output feature map of the specified layers
+        :param save_to_cpu: Default True. Whether to save the output feature maps to cpu or not
         """
 
-        print(f'Batch size: {self.loader.batch_size} - Memory occupation: {self.batch_size * 1e-6:.2f} MB')
+        print(f'Batch size: {self.loader.batch_size}\n'
+              f'\tInput Memory occupation: {self.batch_memory_occupation * len(self.loader) * 1e-6:.2f} MB'
+              f' - Single batch size: {self.batch_memory_occupation * 1e-6:.2f} MB')
+        print(f'\tWeight Memory occupation:'
+              f'\t{self.parameters_memory_occupation * 1e-6:.2f} MB')
+        print(f'\tTotal Memory occupation:'
+              f'\t{(self.parameters_memory_occupation + self.batch_memory_occupation) * 1e-6:.2f} MB')
 
         # TODO: find a more elegant way to do this
         if target_layers_names is None:
@@ -73,25 +94,33 @@ class OutputFeatureMapsManager:
 
         for name, module in self.network.named_modules():
             if name in target_layers_names:
-                module.register_forward_hook(self.__get_layer_hook(layer_name=name))
+                self.hooks.append(module.register_forward_hook(self.__get_layer_hook(layer_name=name,
+                                                                                     save_to_cpu=save_to_cpu)))
 
         self.network.eval()
         self.network.to(self.device)
 
         pbar = tqdm(self.loader, colour='green', desc='Saving Output Feature Maps')
 
-        for batch in pbar:
-            data, _ = batch
-            data = data.to(self.device)
+        with torch.no_grad():
+            for batch in pbar:
+                data, _ = batch
+                data = data.to(self.device)
 
-            _ = self.network(data)
+                _ = self.network(data)
 
         self.output_feature_maps_size = self.output_feature_maps_dict_size / len(self.loader)
 
         # How much more space is required to store a batch output feature map when compared with the batched images in
         # percentage
-        relative_occupation = 100 * self.output_feature_maps_size / self.batch_size
+        input_relative_occupation = 100 * self.output_feature_maps_size / self.batch_memory_occupation
+        total_occupation = (self.parameters_memory_occupation + self.batch_memory_occupation)
+        total_relative_occupation = 100 * self.output_feature_maps_size / total_occupation
 
         print(f'Saved output feature maps')
         print(f'Total occupied memory: {self.output_feature_maps_dict_size * 1e-9:.2f} GB'
-              f' - Single batch size: {self.output_feature_maps_size * 1e-6:.2f} MB ({relative_occupation:.2f}%)')
+              f' - Single batch size: {self.output_feature_maps_size * 1e-6:.2f} MB')
+        print(f'\tRelative Input Overhead:'
+              f'\t{input_relative_occupation:.2f}%')
+        print(f'\tRelative Total Overhead:'
+              f'\t{total_relative_occupation:.2f}%')
