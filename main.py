@@ -1,7 +1,7 @@
 import torch.utils.data
-import torchvision.models
 
 from OutputFeatureMapsManager import OutputFeatureMapsManager
+from FaultInjectionExecutor import FaultInjectionExecutor
 
 from torchvision.models import resnet18
 from torchvision.models.resnet import ResNet18_Weights
@@ -29,6 +29,13 @@ def main():
                                            device=device)
 
     ofm_manager.save_intermediate_layer_outputs()
+
+    fault_injection_executor = FaultInjectionExecutor(network=network,
+                                                      loader=loader,
+                                                      clean_output=ofm_manager.clean_output,
+                                                      ofm=ofm_manager.output_feature_maps_dict)
+
+    fault_injection_executor.run_faulty_campaign_on_weight([['conv1', 1, 1, 1, 1]])
 
 
 if __name__ == '__main__':

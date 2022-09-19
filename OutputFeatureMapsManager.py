@@ -1,5 +1,5 @@
 import torch
-from torch.nn.modules import Sequential
+from torch.nn.modules import Module
 from torch.utils.data import DataLoader
 
 from tqdm import tqdm
@@ -9,7 +9,7 @@ import numpy as np
 class OutputFeatureMapsManager:
 
     def __init__(self,
-                 network: Sequential,
+                 network: Module,
                  loader: DataLoader,
                  device: torch.device):
         """
@@ -46,6 +46,9 @@ class OutputFeatureMapsManager:
 
         # List containing all the registered forward hooks
         self.hooks = list()
+
+        # Tensor containing all the output of all the batches
+        self.clean_output = None
 
     def __get_layer_hook(self,
                          layer_name: str,
@@ -102,12 +105,15 @@ class OutputFeatureMapsManager:
 
         pbar = tqdm(self.loader, colour='green', desc='Saving Output Feature Maps')
 
+        clean_output_batch_list = list()
         with torch.no_grad():
             for batch in pbar:
                 data, _ = batch
                 data = data.to(self.device)
 
-                _ = self.network(data)
+                clean_output_batch_list.append(self.network(data))
+
+        self.clean_output = torch.cat(clean_output_batch_list)
 
         self.output_feature_maps_size = self.output_feature_maps_dict_size / len(self.loader)
 
