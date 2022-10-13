@@ -5,7 +5,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from FaultGenerators.WeightFaultInjector import WeightFaultInjector
-from utils import NoChangeOFMException, formatted_print
+from models.utils import NoChangeOFMException
+from utils import formatted_print
 
 
 class FaultInjectionManager:
@@ -13,9 +14,9 @@ class FaultInjectionManager:
     def __init__(self,
                  network: Module,
                  network_name: str,
+                 injectable_layers: list,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
-                 ofm: dict,
                  threshold: float = 0.1):
 
         self.network = network
@@ -23,14 +24,14 @@ class FaultInjectionManager:
         self.loader = loader
         self.device = 'cuda'
 
-        self.ofm = ofm
         self.clean_output = clean_output
-
-        # The ofm currently loaded on the gpu
-        self.ofm_gpu = None
 
         # The network truncated from a starting layer
         self.faulty_network = None
+
+        # The name of the layers that can be injected
+        self.injectable_layers = injectable_layers
+
 
         # The number of total inferences and the number of skipped inferences
         self.skipped_inferences = 0
@@ -52,7 +53,8 @@ class FaultInjectionManager:
         layer, loading the input feature maps of the previous layer
         :param fault_list: list of fault to inject
         :param fault_dropping: Default True. Whether to drop fault or not
-        :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first batch only
+        :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
+        batch only
         """
 
         self.skipped_inferences = 0
@@ -60,9 +62,6 @@ class FaultInjectionManager:
 
         total_different_predictions = 0
         total_predictions = 0
-
-        # List of all the injectable layers
-        injectable_layers = list(self.ofm.keys())
 
         with torch.no_grad():
 
@@ -90,8 +89,8 @@ class FaultInjectionManager:
 
                     if fault_dropping:
                         # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
-                        check_ofm_dict = {layer: layer_id == injectable_layers.index(fault.layer_name)
-                                          for layer_id, layer in enumerate(injectable_layers)}
+                        check_ofm_dict = {layer: layer_id == self.injectable_layers.index(fault.layer_name)
+                                          for layer_id, layer in enumerate(self.injectable_layers)}
                         self.network.set_check_ofm(check_ofm_dict)
 
                     # Run inference on the current batch

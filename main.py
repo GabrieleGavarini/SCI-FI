@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument('--fault_dropping', action='store_true', help='Drop fault that lead to no change in the OFM')
     parser.add_argument('--batch-size', '-b', type=int, default=64, help='Test set batch size')
     parser.add_argument('--network-name', '-n', type=str, help='Target network',
-                        choices=['ResNet20', 'ResNet32', 'ResNet110'])
+                        choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202'])
 
     parsed_args = parser.parse_args()
 
@@ -72,6 +72,7 @@ def main(args):
                                            device=device)
 
     ofm_manager.save_intermediate_layer_outputs()
+    injectable_layers = ofm_manager.output_feature_maps_layer_names
 
     # Generate fault list
     fault_manager = FaultListGenerator(network=network,
@@ -93,9 +94,9 @@ def main(args):
     # Execute the fault injection campaign
     fault_injection_executor = FaultInjectionManager(network=smart_network,
                                                      network_name=f'Smart{args.network_name}',
+                                                     injectable_layers=injectable_layers,
                                                      loader=test_loader,
-                                                     clean_output=ofm_manager.clean_output,
-                                                     ofm=ofm_manager.output_feature_maps_dict)
+                                                     clean_output=ofm_manager.clean_output)
 
     fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
                                                            # fault_dropping=args.fault_dropping,
@@ -105,13 +106,14 @@ def main(args):
     # Compare with results from non-smart network
     fault_injection_executor = FaultInjectionManager(network=network,
                                                      network_name=args.network_name,
+                                                     injectable_layers=injectable_layers,
                                                      loader=test_loader,
-                                                     clean_output=ofm_manager.clean_output,
-                                                     ofm=ofm_manager.output_feature_maps_dict)
+                                                     clean_output=ofm_manager.clean_output)
 
     fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
                                                            fault_dropping=False,
                                                            first_batch_only=True)
+
 
 if __name__ == '__main__':
     main(args=parse_args())
