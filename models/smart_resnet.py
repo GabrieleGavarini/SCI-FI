@@ -116,7 +116,7 @@ class SmartResNet(ResNet):
     @staticmethod
     def _set_check_ofm_children(layer, check_ofm_dict):
         for block_id, block in enumerate(layer.children()):
-            block.set_check_ofm({re.sub(r'[0-9].', '', key): value for key, value in check_ofm_dict.items() if key[0] == str(block_id)})
+            block.set_check_ofm({re.sub(r'[0-9]+.', '', key): value for key, value in check_ofm_dict.items() if re.findall(r'[0-9]+.', key)[0] == f'{block_id}.'})
 
     def set_check_ofm(self, check_ofm_dict):
         self._set_check_ofm_children(self.layer1, {key.replace(r'layer1.', ''): value

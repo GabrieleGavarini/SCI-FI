@@ -6,8 +6,8 @@ from OutputFeatureMapsManager import OutputFeatureMapsManager
 from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 
-from models.resnet import resnet20, resnet32, resnet110
-from models.smart_resnet import smart_resnet20, smart_resnet32, smart_resnet110
+from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
+from models.smart_resnet import smart_resnet20, smart_resnet32, smart_resnet44, smart_resnet56, smart_resnet110, smart_resnet1202
 from models.utils import load_from_dict, load_CIFAR10_datasets
 
 import argparse
@@ -36,9 +36,18 @@ def main(args):
     elif args.network_name == 'ResNet32':
         network_function = resnet32
         smart_network_function = smart_resnet32
-    elif args.net == 'ResNet110':
+    elif args.network_name == 'ResNet44':
+        network_function = resnet44
+        smart_network_function = smart_resnet44
+    elif args.network_name == 'ResNet56':
+        network_function = resnet56
+        smart_network_function = smart_resnet56
+    elif args.network_name == 'ResNet110':
         network_function = resnet110
         smart_network_function = smart_resnet110
+    elif args.network_name == 'ResNet1202':
+        network_function = resnet1202
+        smart_network_function = smart_resnet1202
     else:
         network_function = None
         smart_network_function = None
@@ -82,17 +91,6 @@ def main(args):
     smart_network.eval()
 
     # Execute the fault injection campaign
-    fault_injection_executor = FaultInjectionManager(network=network,
-                                                     network_name=args.network_name,
-                                                     loader=test_loader,
-                                                     clean_output=ofm_manager.clean_output,
-                                                     ofm=ofm_manager.output_feature_maps_dict)
-
-    fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
-                                                           fault_dropping=False,
-                                                           first_batch_only=True)
-
-
     fault_injection_executor = FaultInjectionManager(network=smart_network,
                                                      network_name=f'Smart{args.network_name}',
                                                      loader=test_loader,
@@ -104,6 +102,16 @@ def main(args):
                                                            fault_dropping=True,
                                                            first_batch_only=True)
 
+    # Compare with results from non-smart network
+    fault_injection_executor = FaultInjectionManager(network=network,
+                                                     network_name=args.network_name,
+                                                     loader=test_loader,
+                                                     clean_output=ofm_manager.clean_output,
+                                                     ofm=ofm_manager.output_feature_maps_dict)
+
+    fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
+                                                           fault_dropping=False,
+                                                           first_batch_only=True)
 
 if __name__ == '__main__':
     main(args=parse_args())
