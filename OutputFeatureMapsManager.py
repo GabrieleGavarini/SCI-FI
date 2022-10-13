@@ -31,9 +31,12 @@ class OutputFeatureMapsManager:
                                              for name, parameter in self.network.named_parameters()]
         self.parameters_memory_occupation = np.sum(parameters_memory_occupation_list)
 
+        # A list of all the possible layers. This list is equivalent to all the keys from output_feature_maps_dict
+        self.output_feature_maps_layer_names = list()
+
         # A dictionary of lists of tensor. Each entry in the dictionary represent a layer: the key is the layer name
         # while the value is a list contains a list of 4-dimensional tensor, where each tensor is the output feature map
-        # for a bath of input images
+        # for a batch of input images
         self.output_feature_maps_dict = dict()
 
         # An integer indicating the number of bytes occupied by the Output Feature Maps (without taking into account
@@ -83,6 +86,7 @@ class OutputFeatureMapsManager:
         """
 
         print(f'Batch size: {self.loader.batch_size}\n'
+              f'Number of batches: {len(self.loader)}\n'
               f'\tInput Memory occupation: {self.batch_memory_occupation * len(self.loader) * 1e-6:.2f} MB'
               f' - Single batch size: {self.batch_memory_occupation * 1e-6:.2f} MB')
         print(f'\tWeight Memory occupation:'
@@ -92,8 +96,10 @@ class OutputFeatureMapsManager:
 
         # TODO: find a more elegant way to do this
         if target_layers_names is None:
-            target_layers_names = [name.replace('.weight', '').replace('.bias', '')
-                                   for name, module in self.network.named_parameters()]
+            target_layers_names = [name.replace('.weight', '') for name, module in self.network.named_parameters()
+                                   if 'weight' in name]
+
+        self.output_feature_maps_layer_names = target_layers_names
 
         for name, module in self.network.named_modules():
             if name in target_layers_names:
@@ -113,7 +119,7 @@ class OutputFeatureMapsManager:
 
                 clean_output_batch_list.append(self.network(data))
 
-        self.clean_output = torch.cat(clean_output_batch_list)
+        self.clean_output = clean_output_batch_list
 
         self.output_feature_maps_size = self.output_feature_maps_dict_size / len(self.loader)
 
@@ -130,3 +136,6 @@ class OutputFeatureMapsManager:
               f'\t{input_relative_occupation:.2f}%')
         print(f'\tRelative Total Overhead:'
               f'\t{total_relative_occupation:.2f}%')
+
+        for hook in self.hooks:
+            hook.remove()
