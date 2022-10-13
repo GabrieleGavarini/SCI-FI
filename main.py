@@ -46,6 +46,7 @@ def main(args):
         exit(-1)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    network_path = f'models/pretrained_models/{args.network_name}.th'
 
     _, _, test_loader = load_CIFAR10_datasets(test_batch_size=args.batch_size)
 
@@ -53,7 +54,7 @@ def main(args):
     network.to(device)
     load_from_dict(network=network,
                    device=device,
-                   path='models/pretrained_models/resnet20-trained.th')
+                   path=network_path)
     network.eval()
 
 
@@ -77,21 +78,10 @@ def main(args):
     smart_network.to(device)
     load_from_dict(network=smart_network,
                    device=device,
-                   path='models/pretrained_models/resnet20-trained.th')
+                   path=network_path)
     smart_network.eval()
 
     # Execute the fault injection campaign
-    fault_injection_executor = FaultInjectionManager(network=smart_network,
-                                                     network_name=f'Smart{args.network_name}',
-                                                     loader=test_loader,
-                                                     clean_output=ofm_manager.clean_output,
-                                                     ofm=ofm_manager.output_feature_maps_dict)
-
-    fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
-                                                           # fault_dropping=args.fault_dropping,
-                                                           fault_dropping=True,
-                                                           first_batch_only=True)
-
     fault_injection_executor = FaultInjectionManager(network=network,
                                                      network_name=args.network_name,
                                                      loader=test_loader,
@@ -102,6 +92,17 @@ def main(args):
                                                            fault_dropping=False,
                                                            first_batch_only=True)
 
+
+    fault_injection_executor = FaultInjectionManager(network=smart_network,
+                                                     network_name=f'Smart{args.network_name}',
+                                                     loader=test_loader,
+                                                     clean_output=ofm_manager.clean_output,
+                                                     ofm=ofm_manager.output_feature_maps_dict)
+
+    fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
+                                                           # fault_dropping=args.fault_dropping,
+                                                           fault_dropping=True,
+                                                           first_batch_only=True)
 
 
 if __name__ == '__main__':
