@@ -33,12 +33,12 @@ def parse_args():
 
 
 def get_device(forbid_cuda: bool,
-               use_cuda: bool) -> str:
+               use_cuda: bool) -> torch.device:
     """
     Get the device where to perform the fault injection
     :param forbid_cuda: Forbids the usage of cuda. Overrides use_cuda
     :param use_cuda: Whether to use the cuda device or the cpu
-    :return:
+    :return: The device where to perform the fault injection
     """
 
     # Disable gpu if set
@@ -51,7 +51,7 @@ def get_device(forbid_cuda: bool,
     else:
         if use_cuda:
             if torch.cuda.is_available():
-                device = torch.device("cuda")
+                device = 'cuda'
             else:
                 device = ''
                 print('ERROR: cuda not available even if use-cuda is set')
@@ -59,7 +59,7 @@ def get_device(forbid_cuda: bool,
         else:
             device = 'cpu'
 
-    return device
+    return torch.device(device)
 
 
 def formatted_print(fault_list: list,
