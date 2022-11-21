@@ -1,6 +1,6 @@
 import copy
-
-import torch.utils.data
+import os
+import shutil
 
 from OutputFeatureMapsManager import OutputFeatureMapsManager
 from FaultInjectionManager import FaultInjectionManager
@@ -10,25 +10,14 @@ from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, res
 from models.smart_resnet import smart_resnet20, smart_resnet32, smart_resnet44, smart_resnet56, smart_resnet110, smart_resnet1202
 from models.utils import load_from_dict, load_CIFAR10_datasets
 
-import argparse
-
-
-def parse_args():
-
-    parser = argparse.ArgumentParser(description='Run a fault injection campaign',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-
-    parser.add_argument('--fault_dropping', action='store_true', help='Drop fault that lead to no change in the OFM')
-    parser.add_argument('--batch-size', '-b', type=int, default=64, help='Test set batch size')
-    parser.add_argument('--network-name', '-n', type=str, help='Target network',
-                        choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202'])
-
-    parsed_args = parser.parse_args()
-
-    return parsed_args
+from utils import get_device, parse_args
 
 
 def main(args):
+
+    device = get_device(forbid_cuda=args.forbid_cuda,
+                        use_cuda=args.use_cuda)
+    print(f'Using device {device}')
 
     if args.network_name == 'ResNet20':
         network_function = resnet20
@@ -54,7 +43,6 @@ def main(args):
         print(f'ERROR: Invalid network name {args.network_name}')
         exit(-1)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     network_path = f'models/pretrained_models/{args.network_name}.th'
 
     _, _, test_loader = load_CIFAR10_datasets(test_batch_size=args.batch_size)
@@ -66,13 +54,25 @@ def main(args):
                    path=network_path)
     network.eval()
 
+    # Folder containing the feature maps
+    fm_folder = f'feature_maps/{args.network_name}/batch_{args.batch_size}'
+
+    # Delete folder if already exists
+    # TODO: make this an option
+    shutil.rmtree(fm_folder, ignore_errors=True)
+    # Create the dir if it doesn't exist
+    os.makedirs(fm_folder, exist_ok=True)
+    ofm_paths = [f'./{fm_folder}/ofm_batch_{i}' for i in range(0, len(test_loader))]
+    ifm_paths = [f'./{fm_folder}/ifm_batch_{i}' for i in range(0, len(test_loader))]
 
     ofm_manager = OutputFeatureMapsManager(network=network,
                                            loader=test_loader,
-                                           device=device)
+                                           device=device,
+                                           ofm_paths=ofm_paths,
+                                           ifm_paths=ifm_paths)
 
     ofm_manager.save_intermediate_layer_outputs()
-    injectable_layers = ofm_manager.output_feature_maps_layer_names
+    injectable_layers = ofm_manager.feature_maps_layer_names
 
     # Generate fault list
     fault_manager = FaultListGenerator(network=network,
@@ -81,9 +81,10 @@ def main(args):
                                        device=device)
     fault_list = fault_manager.get_weight_fault_list(save_fault_list=True)
 
+
     # Create the smart network
-    smart_network = smart_network_function(ofm_dict=ofm_manager.output_feature_maps_dict,
-                                           ifm_dict=ofm_manager.output_feature_maps_dict,
+    smart_network = smart_network_function(ofm_dict_paths=ofm_paths,
+                                           ifm_dict_paths=ifm_paths,
                                            threshold=0.1)
     smart_network.to(device)
     load_from_dict(network=smart_network,

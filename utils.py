@@ -3,6 +3,64 @@ import os
 import numpy as np
 import pandas as pd
 
+import torch
+
+
+import argparse
+
+
+def parse_args():
+    """
+    Parse the argument of the network
+    :return: The parsed argument of the network
+    """
+
+    parser = argparse.ArgumentParser(description='Run a fault injection campaign',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    parser.add_argument('--forbid-cuda', action='store_true',
+                        help='Completely disable the usage of CUDA. This command overrides any other gpu options.')
+    parser.add_argument('--use-cuda', action='store_true',
+                        help='Use the gpu if available.')
+    parser.add_argument('--fault-dropping', action='store_true', help='Drop fault that lead to no change in the OFM')
+    parser.add_argument('--batch-size', '-b', type=int, default=64, help='Test set batch size')
+    parser.add_argument('--network-name', '-n', type=str, help='Target network',
+                        choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202'])
+
+    parsed_args = parser.parse_args()
+
+    return parsed_args
+
+
+def get_device(forbid_cuda: bool,
+               use_cuda: bool) -> str:
+    """
+    Get the device where to perform the fault injection
+    :param forbid_cuda: Forbids the usage of cuda. Overrides use_cuda
+    :param use_cuda: Whether to use the cuda device or the cpu
+    :return:
+    """
+
+    # Disable gpu if set
+    if forbid_cuda:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        device = 'cpu'
+        if use_cuda:
+            print('WARNING: cuda forcibly disabled even if set_cuda is set')
+    # Otherwise, use the appropriate device
+    else:
+        if use_cuda:
+            if torch.cuda.is_available():
+                device = torch.device("cuda")
+            else:
+                device = ''
+                print('ERROR: cuda not available even if use-cuda is set')
+                exit(-1)
+        else:
+            device = 'cpu'
+
+    return device
+
 
 def formatted_print(fault_list: list,
                     network_name: str,
