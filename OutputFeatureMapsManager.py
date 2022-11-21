@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 
 from tqdm import tqdm
 import numpy as np
-import os
+
 import pickle
 
 
@@ -14,12 +14,13 @@ class OutputFeatureMapsManager:
                  network: Module,
                  loader: DataLoader,
                  device: torch.device,
-                 ofm_paths: list = None,
-                 ifm_paths: list = None):
+                 fm_folder: str):
         """
         Manges the recording of output feature maps for a given network on a given database
         :param network: The network to analyze
         :param loader: the data loader for which to save the output feature maps
+        :param device: The device where to perform the inference
+        :param fm_folder: The folder containing the input and output feature mapts
         """
 
         self.network = network
@@ -36,19 +37,15 @@ class OutputFeatureMapsManager:
         self.parameters_memory_occupation = np.sum(parameters_memory_occupation_list)
 
         # A list of all the possible layers. This list is equivalent to all the keys from __output_feature_maps
-        self.feature_maps_layer_names = list()
-        self.feature_maps_layers = list()
+        self.feature_maps_layer_names = [name.replace('.weight', '') for name, module in self.network.named_modules()
+                                         if isinstance(module, torch.nn.Conv2d)]
+        self.feature_maps_layers = [module for name, module in self.network.named_modules()
+                                    if name.replace('.weight', '') in self.feature_maps_layer_names]
 
-        # A string that contains the path where to save the output feature maps
-        self.ifm_paths = ifm_paths
-        self.ofm_paths = ofm_paths
-
-        # A dictionary of tensors containing the value of the output feature maps of all the layers for the current batch.
-        # The dictionary is organized in the following way: the key is the layer name while the value is a 4-dimensional
-        # tensor, representing the output feature map for the specific batch and layer
-        self.__output_feature_maps = dict()
-        # The equivalent dictionary for input feature maps
-        self.__input_feature_maps = dict()
+        # A list of dictionary where every element is the file containing the output feature map for a batch and for the
+        # layer
+        self.ifm_paths = [{j: f'./{fm_folder}/ifm_batch__{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
+        self.ofm_paths = [{j: f'./{fm_folder}/ofm_batch_{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
 
         # An integer indicating the number of bytes occupied by the Output Feature Maps (without taking into account
         # the overhead required by the lists and the dictionary)
@@ -69,10 +66,12 @@ class OutputFeatureMapsManager:
         self.clean_output = None
 
     def __get_layer_hook(self,
+                         batch_id: int,
                          layer_name: str,
                          save_to_cpu: bool):
         """
         Returns a hook function that saves the output feature map of the layer name
+        :param batch_id: The index of the current batch
         :param layer_name: Name of the layer for which to save the output feature maps
         :param save_to_cpu: Default True. Whether to save the output feature maps to cpu or not
         :return: the hook function to register as a forward hook
@@ -83,10 +82,12 @@ class OutputFeatureMapsManager:
             output_to_save = out_tensor.detach().cpu() if save_to_cpu else out_tensor.detach()
 
             # Save the input feature map
-            self.__input_feature_maps[layer_name] = input_to_save
+            with open(self.ifm_paths[batch_id][layer_name], 'wb') as ifm_file:
+                pickle.dump(input_to_save, ifm_file)
 
             # Save the output feature map
-            self.__output_feature_maps[layer_name] = output_to_save
+            with open(self.ofm_paths[batch_id][layer_name], 'wb') as ofm_file:
+                pickle.dump(output_to_save, ofm_file)
 
             # Update information about the memory occupation
             self.__input_feature_maps_size += input_to_save.nelement() * input_to_save.element_size()
@@ -105,13 +106,10 @@ class OutputFeatureMapsManager:
 
 
     def save_intermediate_layer_outputs(self,
-                                        target_layers_names: list = None,
                                         save_to_cpu: bool = True) -> None:
         """
         Save the intermediate layer outputs of the network for the given dataset, saving the resulting output as a
         dictionary, where each entry corresponds to a layer and contains a list of 4-dimensional tensor NCHW
-        :param target_layers_names: Default None. A list of layers name. If None, save the intermediate feature maps of
-        all the layers that have at least one parameter. Otherwise, save the output feature map of the specified layers
         :param save_to_cpu: Default True. Whether to save the output feature maps to cpu or not
         """
 
@@ -124,21 +122,10 @@ class OutputFeatureMapsManager:
         print(f'\tTotal Memory occupation:'
               f'\t{(self.parameters_memory_occupation + self.batch_memory_occupation) * 1e-6:.2f} MB')
 
-        # TODO: find a more elegant way to do this
-        if target_layers_names is None:
-            # target_layers_names = [name.replace('.weight', '') for name, module in self.network.named_parameters()
-            #                        if 'weight' in name]
-            target_layers_names = [name.replace('.weight', '') for name, module in self.network.named_modules()
-                                   if isinstance(module, torch.nn.Conv2d)]
-
-        self.feature_maps_layers = [module for name, module in self.network.named_modules()
-                                    if name.replace('.weight', '') in target_layers_names]
-
-        self.feature_maps_layer_names = target_layers_names
         self.network.eval()
         self.network.to(self.device)
 
-        pbar = tqdm(self.loader, colour='green', desc='Saving Output Feature Maps')
+        pbar = tqdm(self.loader, colour='green', desc='Saving Feature Maps')
 
         clean_output_batch_list = list()
         with torch.no_grad():
@@ -148,25 +135,14 @@ class OutputFeatureMapsManager:
 
                 # Register hooks for current batch
                 for name, module in self.network.named_modules():
-                    if name in target_layers_names:
-                        self.hooks.append(module.register_forward_hook(self.__get_layer_hook(layer_name=name,
+                    if name in self.feature_maps_layer_names:
+                        self.hooks.append(module.register_forward_hook(self.__get_layer_hook(batch_id=batch_id,
+                                                                                             layer_name=name,
                                                                                              save_to_cpu=save_to_cpu)))
 
                 # Execute the network and save the clean output
                 clean_output_batch = self.network(data)
                 clean_output_batch_list.append(clean_output_batch)
-
-                # Save the output of the batch to file
-                with open(self.ofm_paths[batch_id], 'wb') as ofm_file:
-                    pickle.dump(self.__output_feature_maps, ofm_file)
-                # Clear the dictionary of the current batch
-                self.__output_feature_maps = dict()
-
-                # Save the inputs of the batch to file
-                with open(self.ifm_paths[batch_id], 'wb') as ifm_file:
-                    pickle.dump(self.__input_feature_maps, ifm_file)
-                # Clear the dictionary of the current batch
-                self.__input_feature_maps = dict()
 
                 # Remove all the hooks
                 self.__remove_all_hooks()

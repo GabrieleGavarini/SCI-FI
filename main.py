@@ -62,14 +62,11 @@ def main(args):
     shutil.rmtree(fm_folder, ignore_errors=True)
     # Create the dir if it doesn't exist
     os.makedirs(fm_folder, exist_ok=True)
-    ofm_paths = [f'./{fm_folder}/ofm_batch_{i}' for i in range(0, len(test_loader))]
-    ifm_paths = [f'./{fm_folder}/ifm_batch_{i}' for i in range(0, len(test_loader))]
 
     ofm_manager = OutputFeatureMapsManager(network=network,
                                            loader=test_loader,
                                            device=device,
-                                           ofm_paths=ofm_paths,
-                                           ifm_paths=ifm_paths)
+                                           fm_folder=fm_folder)
 
     ofm_manager.save_intermediate_layer_outputs()
     injectable_layers = ofm_manager.feature_maps_layer_names
