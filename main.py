@@ -7,39 +7,32 @@ from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 
 from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
-from models.smart_resnet import smart_resnet20, smart_resnet32, smart_resnet44, smart_resnet56, smart_resnet110, smart_resnet1202
-from models.utils import load_from_dict, load_CIFAR10_datasets
+from models.utils import load_from_dict, load_CIFAR10_datasets, replace_conv_layers
 
 from utils import get_device, parse_args
 
 
 def main(args):
 
+    # Select the device
     device = get_device(forbid_cuda=args.forbid_cuda,
                         use_cuda=args.use_cuda)
     print(f'Using device {device}')
 
     if args.network_name == 'ResNet20':
         network_function = resnet20
-        smart_network_function = smart_resnet20
     elif args.network_name == 'ResNet32':
         network_function = resnet32
-        smart_network_function = smart_resnet32
     elif args.network_name == 'ResNet44':
         network_function = resnet44
-        smart_network_function = smart_resnet44
     elif args.network_name == 'ResNet56':
         network_function = resnet56
-        smart_network_function = smart_resnet56
     elif args.network_name == 'ResNet110':
         network_function = resnet110
-        smart_network_function = smart_resnet110
     elif args.network_name == 'ResNet1202':
         network_function = resnet1202
-        smart_network_function = smart_resnet1202
     else:
         network_function = None
-        smart_network_function = None
         print(f'ERROR: Invalid network name {args.network_name}')
         exit(-1)
 
@@ -69,42 +62,44 @@ def main(args):
                                            fm_folder=fm_folder)
 
     ofm_manager.save_intermediate_layer_outputs()
-    injectable_layers = ofm_manager.feature_maps_layer_names
 
     # Generate fault list
     fault_manager = FaultListGenerator(network=network,
                                        network_name=args.network_name,
-                                       loader=copy.deepcopy(test_loader),
+                                       injectable_layer_names=ofm_manager.feature_maps_layer_names,
                                        device=device)
-    fault_list = fault_manager.get_weight_fault_list(save_fault_list=True)
 
+    fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
+                                                     save_fault_list=True)
 
-    # Create the smart network
-    smart_network = smart_network_function(ofm_dict_paths=ofm_paths,
-                                           ifm_dict_paths=ifm_paths,
-                                           threshold=0.1)
-    smart_network.to(device)
-    load_from_dict(network=smart_network,
-                   device=device,
-                   path=network_path)
-    smart_network.eval()
+    # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
+    smart_network = copy.deepcopy(network)
 
-    # Execute the fault injection campaign
+    print(f'Fault dropping on {args.network_name} (threshold: {args.threshold})')
+
+    # Replace the convolutional layers
+    smart_convolutions = replace_conv_layers(network=smart_network,
+                                             device=device,
+                                             fm_folder=fm_folder,
+                                             threshold=args.threshold)
+
+    # Execute the fault injection campaign with the smart network
     fault_injection_executor = FaultInjectionManager(network=smart_network,
                                                      network_name=f'Smart{args.network_name}',
-                                                     injectable_layers=injectable_layers,
+                                                     device=device,
+                                                     smart_convolutions=smart_convolutions,
                                                      loader=test_loader,
                                                      clean_output=ofm_manager.clean_output)
 
     fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
-                                                           # fault_dropping=args.fault_dropping,
                                                            fault_dropping=True,
                                                            first_batch_only=True)
 
-    # Compare with results from non-smart network
+    # Execute the fault injection campaign with the "dumb" network
     fault_injection_executor = FaultInjectionManager(network=network,
                                                      network_name=args.network_name,
-                                                     injectable_layers=injectable_layers,
+                                                     device=device,
+                                                     smart_convolutions=smart_convolutions,
                                                      loader=test_loader,
                                                      clean_output=ofm_manager.clean_output)
 

@@ -1,3 +1,5 @@
+import shutil
+
 import torch
 from torch.nn import Module
 from torch.utils.data import DataLoader
@@ -5,8 +7,12 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from FaultGenerators.WeightFaultInjector import WeightFaultInjector
-from models.utils import NoChangeOFMException
+from models.SmartLayers.utils import NoChangeOFMException
 from utils import formatted_print
+
+from typing import List
+
+from models.SmartLayers.SmartConv2d import SmartConv2d
 
 
 class FaultInjectionManager:
@@ -14,23 +20,23 @@ class FaultInjectionManager:
     def __init__(self,
                  network: Module,
                  network_name: str,
-                 injectable_layers: list,
+                 smart_convolutions: List[SmartConv2d],
+                 device: torch.device,
                  loader: DataLoader,
-                 clean_output: torch.Tensor,
-                 threshold: float = 0.1):
+                 clean_output: torch.Tensor):
 
         self.network = network
         self.network_name = network_name
         self.loader = loader
-        self.device = 'cuda'
+        self.device = device
 
         self.clean_output = clean_output
 
         # The network truncated from a starting layer
         self.faulty_network = None
 
-        # The name of the layers that can be injected
-        self.injectable_layers = injectable_layers
+        # The smart convolution layers
+        self.__smart_convolutions = smart_convolutions
 
 
         # The number of total inferences and the number of skipped inferences
@@ -39,9 +45,6 @@ class FaultInjectionManager:
 
         # The weight fault injector
         self.weight_fault_injector = WeightFaultInjector(self.network)
-
-        # The threshold under which no difference is detected
-        self.threshold = threshold
 
 
     def run_faulty_campaign_on_weight(self,
@@ -75,23 +78,30 @@ class FaultInjectionManager:
 
                 if fault_dropping:
                     # Move the corresponding ofm to the gpu
-                    self.network.move_to_gpu(batch_id)
+                    for convolution in self.__smart_convolutions:
+                        convolution.load_golden(batch_id=batch_id)
 
                 # Inject all the faults in a single batch
-                pbar = tqdm(fault_list, colour='green', desc=f'FI on b {batch_id}')
+                pbar = tqdm(fault_list, colour='green', desc=f'FI on b {batch_id}', ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
 
                     if fault_dropping:
+                        # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
+                        for convolution in self.__smart_convolutions:
+                            convolution.do_not_compare_with_golden()
+                            if convolution.layer_name == fault.layer_name:
+                                convolution.compare_with_golden()
+
                         # Change the description of the progress bar
                         pbar.set_description(f'FI (w/ drop) on b {batch_id}')
+                        fault.layer_name = f'{fault.layer_name}._SmartConv2d__conv_layer'
+                    else:
+                        # Correct the layer name in case it has been changed
+                        fault.layer_name = fault.layer_name.replace('._SmartConv2d__conv_layer', '')
+
+
                     # Inject faults in the weight
                     self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
-
-                    if fault_dropping:
-                        # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
-                        check_ofm_dict = {layer: layer_id == self.injectable_layers.index(fault.layer_name)
-                                          for layer_id, layer in enumerate(self.injectable_layers)}
-                        self.network.set_check_ofm(check_ofm_dict)
 
                     # Run inference on the current batch
                     faulty_prediction, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,
@@ -106,9 +116,9 @@ class FaultInjectionManager:
 
                     # Measure the loss in accuracy
                     total_predictions += len(batch[0])
-                    different_predictions_percentage = 100 * different_predictions / total_predictions
-                    pbar.set_postfix({'D': f'{different_predictions_percentage:.0f}%',
-                                      'S': f'{100*self.skipped_inferences/self.total_inferences:.2f}%'})
+                    different_predictions_percentage = 100 * total_different_predictions / total_predictions
+                    pbar.set_postfix({'Different': f'{different_predictions_percentage:.4f}%',
+                                      'Skipped': f'{100*self.skipped_inferences/self.total_inferences:.2f}%'})
 
                     # Restore the golden value
                     self.weight_fault_injector.restore_golden()
@@ -122,6 +132,12 @@ class FaultInjectionManager:
                 # End after only one batch if the option is specified
                 if first_batch_only:
                     break
+
+                # Remove all the loaded golden output feature map
+                if fault_dropping:
+                    for convolution in self.__smart_convolutions:
+                        convolution.unload_golden_ofm()
+
 
     def __run_inference_on_batch(self,
                                  batch_id: int,
@@ -140,12 +156,11 @@ class FaultInjectionManager:
         except NoChangeOFMException:
             # If the fault doesn't change the output feature map, then simply say that the fault doesn't worsen the
             # network performances for this batch
-            # faulty_prediction = torch.topk(self.clean_output[batch_id], k=1)
             faulty_prediction_indices = None
             different_predictions = 0
-            self.skipped_inferences += len(data)
+            self.skipped_inferences += 1
 
-        self.total_inferences += len(data)
+        self.total_inferences += 1
 
         return faulty_prediction_indices, different_predictions
 

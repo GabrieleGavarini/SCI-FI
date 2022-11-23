@@ -27,6 +27,8 @@ class WeightFaultInjector:
         else:
             faulty_value = self.__float32_stuck_at(value)
 
+        self.faulty_value = faulty_value
+
         self.network.state_dict()[self.layer_name][self.tensor_index] = faulty_value
 
     def __float32_bit_flip(self):

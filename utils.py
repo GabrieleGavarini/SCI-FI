@@ -26,6 +26,7 @@ def parse_args():
     parser.add_argument('--batch-size', '-b', type=int, default=64, help='Test set batch size')
     parser.add_argument('--network-name', '-n', type=str, help='Target network',
                         choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202'])
+    parser.add_argument('--threshold', type=float, default=0.0, help='The threshold under which an error is undetected')
 
     parsed_args = parser.parse_args()
 

@@ -1,3 +1,5 @@
+import pickle
+
 import torch
 import re
 import torch.nn as nn
@@ -6,7 +8,7 @@ from models.resnet import BasicBlock, ResNet
 
 __all__ = ['ResNet', 'smart_resnet20', 'smart_resnet32', 'smart_resnet44', 'smart_resnet56', 'smart_resnet110', 'smart_resnet1202']
 
-from models.utils import check_difference
+from models.SmartLayers.utils import check_difference
 from models.SmartNetwork import SmartNetwork
 
 
@@ -14,15 +16,15 @@ class SmartBasicBlock(BasicBlock):
 
     expansion = 1
 
-    def __init__(self, ofm_dict, ifm_dict, in_planes, planes, stride=1, option='A', threshold=0):
+    def __init__(self, ofm_dict_paths, ifm_dict_paths, in_planes, planes, stride=1, option='A', threshold=0):
         super(SmartBasicBlock, self).__init__(in_planes=in_planes,
                                               planes=planes,
                                               stride=stride,
                                               option=option)
 
-        # A dictionary containing all the output feature maps, for all the possible batches
-        self.ofm_dict = ofm_dict
-        self.ifm_dict = ifm_dict
+        # A path to files containing all the output and input feature maps, for all the possible batches
+        self.ofm_dict_paths = ofm_dict_paths
+        self.ifm_dict_paths = ifm_dict_paths
 
         # A dictionary containing all the output feature maps for a particular batch. They get loaded when move_to_gpu
         # gets called.
@@ -38,8 +40,11 @@ class SmartBasicBlock(BasicBlock):
 
     def move_to_gpu(self, batch_id):
         # TODO: load from a file and not from main memory
-        self.ofm_gpu = {key: value[batch_id].cuda() for key, value in self.ofm_dict.items()}
-        self.ifm_gpu = {key: value[batch_id].cuda() for key, value in self.ifm_dict.items()}
+        with open(self.ofm_dict_paths[batch_id], 'rb') as ofm_file, open(self.ifm_dict_paths[batch_id], 'rb') as ifm_file:
+            ofm_dict = pickle.load(ofm_file)
+            ifm_dict = pickle.load(ifm_file)
+            self.ofm_gpu = {key: value.cuda() for key, value in ofm_dict.items()}
+            self.ifm_gpu = {key: value.cuda() for key, value in ifm_dict.items()}
 
     def set_check_ofm(self, check_ofm_dict):
         self.check_ofm_dict = check_ofm_dict
@@ -83,7 +88,7 @@ class SmartResNet(ResNet, SmartNetwork):
 
     OFM = None
 
-    def __init__(self, block, num_blocks, ofm_dict, ifm_dict, num_classes=10, threshold=0):
+    def __init__(self, block, num_blocks, ofm_dict_paths, ifm_dict_paths, num_classes=10, threshold=0):
         super(SmartResNet, self).__init__(block=BasicBlock, num_blocks=num_blocks, num_classes=num_classes)
 
         # A dictionary where every key is a layer name and the corresponding value is a bool that specifies whether the
@@ -93,8 +98,8 @@ class SmartResNet(ResNet, SmartNetwork):
         # Dict with the input feature map and the output feature maps of each injectable layer. For each layer, the dict
         # contains a list of the ofm for each batch
         # TODO: this should be saved to a file and not kept in main memory
-        self.ofm_dict = ofm_dict
-        self.ifm_dict = ifm_dict
+        self.ofm_dict_paths = ofm_dict_paths
+        self.ifm_dict_paths = ifm_dict_paths
 
         # The input feature maps and the output feature maps of the current batch that are loaded in video memory
         self.ofm_gpu = None
@@ -133,8 +138,11 @@ class SmartResNet(ResNet, SmartNetwork):
         self.__move_layer_to_gpu(self.layer3, batch_id)
 
         # TODO: this should load from a file and not from memory
-        self.ofm_gpu = {key: value[batch_id].cuda() for key, value in self.ofm_dict.items() if 'layer' not in key}
-        self.ifm_gpu = {key: value[batch_id].cuda() for key, value in self.ifm_dict.items() if 'layer' not in key}
+        with open(self.ofm_dict_paths[batch_id], 'r') as ofm_file, open(self.ifm_dict_paths[batch_id], 'r') as ifm_file:
+            ofm_dict = pickle.load(ofm_file)
+            ifm_dict = pickle.load(ifm_file)
+            self.ofm_gpu = {key: value.cuda() for key, value in ofm_dict.items() if 'layer' not in key}
+            self.ifm_gpu = {key: value.cuda() for key, value in ifm_dict.items() if 'layer' not in key}
 
     @staticmethod
     def __set_check_ofm_children(layer: torch.nn.Module,
@@ -167,11 +175,12 @@ class SmartResNet(ResNet, SmartNetwork):
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
         for stride_id, stride in enumerate(strides):
-            ofm_dict = {key.replace(f'{layer_name}.{stride_id}.', ''): value for key, value in self.ofm_dict.items()
+            # TODO: manage this mess. We have to specify the keys inside the layers and not simplify the dicts
+            ofm_dict = {key.replace(f'{layer_name}.{stride_id}.', ''): value for key, value in self.ofm_gpu.items()
                         if f'{layer_name}.{stride_id}.' in key}
-            ifm_dict = {key.replace(f'{layer_name}.{stride_id}.', ''): value for key, value in self.ifm_dict.items()
+            ifm_dict = {key.replace(f'{layer_name}.{stride_id}.', ''): value for key, value in self.ifm_gpu.items()
                         if f'{layer_name}.{stride_id}.' in key}
-            layers.append(block(ofm_dict, ifm_dict, self.in_planes, planes, stride, threshold=threshold))
+            layers.append(block(self.ofm_dict_paths, self.ifm_dict_paths, self.in_planes, planes, stride, threshold=threshold))
             self.in_planes = planes * block.expansion
 
         return nn.Sequential(*layers)
@@ -200,49 +209,49 @@ class SmartResNet(ResNet, SmartNetwork):
         return out
 
 
-def smart_resnet20(ifm_dict, ofm_dict, threshold=0):
+def smart_resnet20(ifm_dict_paths, ofm_dict_paths, threshold=0):
     return SmartResNet(block=SmartBasicBlock,
-                       ifm_dict=ifm_dict,
-                       ofm_dict=ofm_dict,
+                       ifm_dict_paths=ifm_dict_paths,
+                       ofm_dict_paths=ofm_dict_paths,
                        num_blocks=[3, 3, 3],
                        threshold=threshold)
 
 
-def smart_resnet32(ifm_dict, ofm_dict, threshold=0):
+def smart_resnet32(ifm_dict_paths, ofm_dict_paths, threshold=0):
     return SmartResNet(block=SmartBasicBlock,
-                       ifm_dict=ifm_dict,
-                       ofm_dict=ofm_dict,
+                       ifm_dict_paths=ifm_dict_paths,
+                       ofm_dict_paths=ofm_dict_paths,
                        num_blocks=[5, 5, 5],
                        threshold=threshold)
 
 
-def smart_resnet44(ifm_dict, ofm_dict, threshold=0):
+def smart_resnet44(ifm_dict_paths, ofm_dict_paths, threshold=0):
     return SmartResNet(block=SmartBasicBlock,
-                       ifm_dict=ifm_dict,
-                       ofm_dict=ofm_dict,
+                       ifm_dict_paths=ifm_dict_paths,
+                       ofm_dict_paths=ofm_dict_paths,
                        num_blocks=[7, 7, 7],
                        threshold=threshold)
 
 
-def smart_resnet56(ifm_dict, ofm_dict, threshold=0):
+def smart_resnet56(ifm_dict_paths, ofm_dict_paths, threshold=0):
     return SmartResNet(block=SmartBasicBlock,
-                       ifm_dict=ifm_dict,
-                       ofm_dict=ofm_dict,
+                       ifm_dict_paths=ifm_dict_paths,
+                       ofm_dict_paths=ofm_dict_paths,
                        num_blocks=[9, 9, 9],
                        threshold=threshold)
 
 
-def smart_resnet110(ifm_dict, ofm_dict, threshold=0):
+def smart_resnet110(ifm_dict_paths, ofm_dict_paths, threshold=0):
     return SmartResNet(block=SmartBasicBlock,
-                       ifm_dict=ifm_dict,
-                       ofm_dict=ofm_dict,
+                       ifm_dict_paths=ifm_dict_paths,
+                       ofm_dict_paths=ofm_dict_paths,
                        num_blocks=[18, 18, 18],
                        threshold=threshold)
 
 
-def smart_resnet1202(ifm_dict, ofm_dict, threshold=0):
+def smart_resnet1202(ifm_dict_paths, ofm_dict_paths, threshold=0):
     return SmartResNet(block=SmartBasicBlock,
-                       ifm_dict=ifm_dict,
-                       ofm_dict=ofm_dict,
+                       ifm_dict_paths=ifm_dict_paths,
+                       ofm_dict_paths=ofm_dict_paths,
                        num_blocks=[200, 200, 200],
                        threshold=threshold)
