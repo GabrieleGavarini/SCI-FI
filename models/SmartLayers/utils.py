@@ -24,26 +24,8 @@ def check_difference(check_control: bool,
     :return:
     """
 
-    # DEBUG
-    import time
-    elapsed = 0
-    for _ in range(1000):
-        start_time = time.time()
-        check_control and torch.all(faulty.eq(golden))
-        elapsed += time.time() - start_time
-    elapsed = elapsed / 1000
-    print(f'Mean time {elapsed:.7f}')
-
-    elapsed = 0
-    for _ in range(1000):
-        start_time = time.time()
-        check_control and torch.sum((golden - faulty).abs()) == 0
-        elapsed += time.time() - start_time
-    elapsed = elapsed / 1000
-    print(f'Mean time {elapsed:.7f}')
-
     if threshold == 0:
-        if check_control and torch.sum((golden - faulty).abs()) == 0:
+        if check_control and torch.all(faulty.eq(golden)):
             raise NoChangeOFMException
 
     elif check_control and torch.sum((golden - faulty).abs() > threshold) == 0:

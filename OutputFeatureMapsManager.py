@@ -14,13 +14,15 @@ class OutputFeatureMapsManager:
                  network: Module,
                  loader: DataLoader,
                  device: torch.device,
-                 fm_folder: str):
+                 fm_folder: str,
+                 clean_output_folder: str):
         """
         Manges the recording of output feature maps for a given network on a given database
         :param network: The network to analyze
         :param loader: the data loader for which to save the output feature maps
         :param device: The device where to perform the inference
-        :param fm_folder: The folder containing the input and output feature mapts
+        :param clean_output_folder: The folder where to load/store the clean output of the network
+        :param fm_folder: The folder containing the input and output feature maps
         """
 
         self.network = network
@@ -65,6 +67,9 @@ class OutputFeatureMapsManager:
         # Tensor containing all the output of all the batches
         self.clean_output = None
 
+        # Name of the file where to save the clean output
+        self.__clean_output_path = f'{clean_output_folder}/clean_output.pt'
+
     def __get_layer_hook(self,
                          batch_id: int,
                          layer_name: str,
@@ -95,7 +100,6 @@ class OutputFeatureMapsManager:
 
         return save_output_feature_map_hook
 
-
     def __remove_all_hooks(self) -> None:
         """
         Remove all the forward hooks on the network
@@ -103,7 +107,6 @@ class OutputFeatureMapsManager:
         for hook in self.hooks:
             hook.remove()
         self.hooks = list()
-
 
     def save_intermediate_layer_outputs(self,
                                         save_to_cpu: bool = True) -> None:
@@ -147,8 +150,9 @@ class OutputFeatureMapsManager:
                 # Remove all the hooks
                 self.__remove_all_hooks()
 
-
         self.clean_output = clean_output_batch_list
+        # Save the clean output to file
+        pickle.dump(self.clean_output, open(self.__clean_output_path, 'wb'))
 
         self.input_feature_maps_size = self.__input_feature_maps_size / len(self.loader)
         self.output_feature_maps_size = self.__output_feature_maps_size / len(self.loader)
@@ -166,3 +170,14 @@ class OutputFeatureMapsManager:
               f'\t{input_relative_occupation:.2f}%')
         print(f'\tRelative Total Overhead:'
               f'\t{total_relative_occupation:.2f}%')
+
+    def load_clean_output(self) -> None:
+        """
+        Load the clean output of the network. If the file is not found, compute the clean output (and the clean output
+        feature maps)
+        """
+        try:
+            self.clean_output = pickle.load(open(self.__clean_output_path, 'rb'))
+        except FileNotFoundError:
+            print('No previous clean output found, starting clean inference...')
+            self.save_intermediate_layer_outputs()

@@ -48,20 +48,29 @@ def main(args):
     network.eval()
 
     # Folder containing the feature maps
-    fm_folder = f'feature_maps/{args.network_name}/batch_{args.batch_size}'
-
-    # Delete folder if already exists
-    # TODO: make this an option
-    shutil.rmtree(fm_folder, ignore_errors=True)
-    # Create the dir if it doesn't exist
-    os.makedirs(fm_folder, exist_ok=True)
+    fm_folder = f'output/feature_maps/{args.network_name}/batch_{args.batch_size}'
+    # Folder containing the clean output
+    clean_output_folder = f'output/clean_output/{args.network_name}/batch_{args.batch_size}'
 
     ofm_manager = OutputFeatureMapsManager(network=network,
                                            loader=test_loader,
                                            device=device,
-                                           fm_folder=fm_folder)
+                                           fm_folder=fm_folder,
+                                           clean_output_folder=clean_output_folder)
 
-    ofm_manager.save_intermediate_layer_outputs()
+    if args.force_reload:
+        # Delete folder if already exists
+        shutil.rmtree(fm_folder, ignore_errors=True)
+        # Create the fm dir if it doesn't exist
+        os.makedirs(fm_folder, exist_ok=True)
+        # Create the clean output dir if it doesn't exist
+        os.makedirs(clean_output_folder, exist_ok=True)
+
+        # Save the intermediate layer
+        ofm_manager.save_intermediate_layer_outputs()
+
+    else:
+        ofm_manager.load_clean_output()
 
     # Generate fault list
     fault_manager = FaultListGenerator(network=network,
@@ -71,6 +80,10 @@ def main(args):
 
     fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
                                                      save_fault_list=True)
+
+    # ----- DEBUG ----- #
+    fault_list = [f for f in fault_list if f.bit == 30]
+    # ----- DEBUG ----- #
 
     # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
     smart_network = copy.deepcopy(network)

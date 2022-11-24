@@ -22,11 +22,17 @@ def parse_args():
                         help='Completely disable the usage of CUDA. This command overrides any other gpu options.')
     parser.add_argument('--use-cuda', action='store_true',
                         help='Use the gpu if available.')
-    parser.add_argument('--fault-dropping', action='store_true', help='Drop fault that lead to no change in the OFM')
-    parser.add_argument('--batch-size', '-b', type=int, default=64, help='Test set batch size')
-    parser.add_argument('--network-name', '-n', type=str, help='Target network',
+    parser.add_argument('--force-reload', action='store_true',
+                        help='Force the computation of the output feature map.')
+    parser.add_argument('--fault-dropping', action='store_true',
+                        help='Drop fault that lead to no change in the OFM')
+    parser.add_argument('--batch-size', '-b', type=int, default=64,
+                        help='Test set batch size')
+    parser.add_argument('--network-name', '-n', type=str,
+                        help='Target network',
                         choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202'])
-    parser.add_argument('--threshold', type=float, default=0.0, help='The threshold under which an error is undetected')
+    parser.add_argument('--threshold', type=float, default=0.0,
+                        help='The threshold under which an error is undetected')
 
     parsed_args = parser.parse_args()
 
