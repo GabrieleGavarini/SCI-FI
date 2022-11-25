@@ -41,7 +41,8 @@ class SmartConv2d(Module):
         # The path of the folder where the output and input feature map file (containing the tensors) are located
         self.__fm_folder = fm_folder
 
-        # The golden output of the layer
+        # The golden input/output of the layer
+        self.__golden_ifm = None
         self.__golden_ofm = None
 
         # Whether the output of this layer should be compared with the golden output
@@ -61,11 +62,13 @@ class SmartConv2d(Module):
         self.__batch_id = batch_id
 
         # Name of the ofm file
-        file_name = f'{self.__fm_folder}/ofm_batch_{self.__batch_id}_layer_{self.layer_name}.pt'
+        ofm_file_name = f'{self.__fm_folder}/ofm_batch_{self.__batch_id}_layer_{self.layer_name}.pt'
+        # Name of the ifm file
+        ifm_file_name = f'{self.__fm_folder}/ifm_batch_{self.__batch_id}_layer_{self.layer_name}.pt'
 
-        # Load the golden ofm
-        with open(file_name, 'rb') as ofm_file:
-            self.__golden_ofm = pickle.load(ofm_file).to(self.__device)
+        # Load the golden ifm
+        with open(ifm_file_name, 'rb') as ifm_file:
+            self.__golden_ifm = pickle.load(ifm_file).to(self.__device)
 
 
     def compare_with_golden(self) -> None:
@@ -99,13 +102,13 @@ class SmartConv2d(Module):
         :return: The output tensor of the layer
         """
 
+        # Check for difference with the golden input, if the layer is marked
+        check_difference(check_control=self.__compare_ofm_with_golden,
+                         golden=self.__golden_ifm,
+                         faulty=input_tensor,
+                         threshold=self.__threshold)
+
         # Compute convolutional output
         conv_output = self.__conv_layer(input_tensor)
-
-        # Check for difference with the golden output, if the layer is marked
-        check_difference(check_control=self.__compare_ofm_with_golden,
-                         golden=self.__golden_ofm,
-                         faulty=conv_output,
-                         threshold=self.__threshold)
 
         return conv_output

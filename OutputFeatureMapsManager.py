@@ -46,7 +46,7 @@ class OutputFeatureMapsManager:
 
         # A list of dictionary where every element is the file containing the output feature map for a batch and for the
         # layer
-        self.ifm_paths = [{j: f'./{fm_folder}/ifm_batch__{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
+        self.ifm_paths = [{j: f'./{fm_folder}/ifm_batch_{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
         self.ofm_paths = [{j: f'./{fm_folder}/ofm_batch_{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
 
         # An integer indicating the number of bytes occupied by the Output Feature Maps (without taking into account
@@ -177,7 +177,7 @@ class OutputFeatureMapsManager:
         feature maps)
         """
         try:
-            self.clean_output = pickle.load(open(self.__clean_output_path, 'rb'))
+            self.clean_output = [tensor.to(self.device) for tensor in pickle.load(open(self.__clean_output_path, 'rb'))]
         except FileNotFoundError:
             print('No previous clean output found, starting clean inference...')
             self.save_intermediate_layer_outputs()

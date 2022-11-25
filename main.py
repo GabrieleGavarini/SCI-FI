@@ -2,6 +2,8 @@ import copy
 import os
 import shutil
 
+import torch
+
 from OutputFeatureMapsManager import OutputFeatureMapsManager
 from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
@@ -13,6 +15,9 @@ from utils import get_device, parse_args
 
 
 def main(args):
+
+    # Set deterministic algorithms
+    torch.use_deterministic_algorithms(mode=True)
 
     # Select the device
     device = get_device(forbid_cuda=args.forbid_cuda,
@@ -58,18 +63,19 @@ def main(args):
                                            fm_folder=fm_folder,
                                            clean_output_folder=clean_output_folder)
 
+    # Create the fm dir if it doesn't exist
+    os.makedirs(fm_folder, exist_ok=True)
+    # Create the clean output dir if it doesn't exist
+    os.makedirs(clean_output_folder, exist_ok=True)
+
     if args.force_reload:
         # Delete folder if already exists
         shutil.rmtree(fm_folder, ignore_errors=True)
-        # Create the fm dir if it doesn't exist
-        os.makedirs(fm_folder, exist_ok=True)
-        # Create the clean output dir if it doesn't exist
-        os.makedirs(clean_output_folder, exist_ok=True)
 
         # Save the intermediate layer
         ofm_manager.save_intermediate_layer_outputs()
-
     else:
+        # Try to load the clean input
         ofm_manager.load_clean_output()
 
     # Generate fault list
@@ -80,10 +86,6 @@ def main(args):
 
     fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
                                                      save_fault_list=True)
-
-    # ----- DEBUG ----- #
-    fault_list = [f for f in fault_list if f.bit == 30]
-    # ----- DEBUG ----- #
 
     # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
     smart_network = copy.deepcopy(network)

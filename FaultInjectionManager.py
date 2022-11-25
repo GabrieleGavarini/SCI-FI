@@ -82,19 +82,37 @@ class FaultInjectionManager:
                         convolution.load_golden(batch_id=batch_id)
 
                 # Inject all the faults in a single batch
-                pbar = tqdm(fault_list, colour='green', desc=f'FI on b {batch_id}', ncols=shutil.get_terminal_size().columns * 2)
+                pbar = tqdm(fault_list,
+                            colour='green',
+                            desc=f'FI on b {batch_id}',
+                            ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
 
                     if fault_dropping:
                         # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
+
+                        # List of all the layer for which it is possible to compare the ofm
+                        convolution_names = [convolution.layer_name for convolution in self.__smart_convolutions]
+                        fault_layer_index = convolution_names.index(fault.layer_name)
+
                         for convolution in self.__smart_convolutions:
-                            convolution.do_not_compare_with_golden()
-                            if convolution.layer_name == fault.layer_name:
+
+                            # Add the comparison for all the layers after the fault injection
+                            if convolution.layer_name in convolution_names[fault_layer_index+1:fault_layer_index+2]:
                                 convolution.compare_with_golden()
+
+                            # Remove the comparison with golden for all the layer previous to the computation of the faulty
+                            # layer
+                            else:
+                                convolution.do_not_compare_with_golden()
+
 
                         # Change the description of the progress bar
                         pbar.set_description(f'FI (w/ drop) on b {batch_id}')
-                        fault.layer_name = f'{fault.layer_name}._SmartConv2d__conv_layer'
+                        # Only add the suffix for the smart convolution if it not already present (i.e. from the second
+                        # batch onward)
+                        if '._SmartConv2d__conv_layer' not in fault.layer_name:
+                            fault.layer_name = f'{fault.layer_name}._SmartConv2d__conv_layer'
                     else:
                         # Correct the layer name in case it has been changed
                         fault.layer_name = fault.layer_name.replace('._SmartConv2d__conv_layer', '')
