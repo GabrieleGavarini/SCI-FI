@@ -26,6 +26,8 @@ def parse_args():
                         help='Force the computation of the output feature map.')
     parser.add_argument('--fault-dropping', action='store_true',
                         help='Drop fault that lead to no change in the OFM')
+    parser.add_argument('--fault-delayed-start', action='store_true',
+                        help='Start executing the faulty network from the layer where the fault is injected')
     parser.add_argument('--batch-size', '-b', type=int, default=64,
                         help='Test set batch size')
     parser.add_argument('--network-name', '-n', type=str,

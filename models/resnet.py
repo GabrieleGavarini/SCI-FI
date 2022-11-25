@@ -67,7 +67,22 @@ class ResNet(nn.Module):
         self.layer3 = self._make_layer(block, 64, num_blocks[2], stride=2)
         self.linear = nn.Linear(64, num_classes)
 
+        # Append all layers to a list
+        self.layers = None
+        self.generate_layer_list()
+
         self.apply(_weights_init)
+
+    def generate_layer_list(self):
+        self.layers = [self.conv1,
+                       self.bn1,
+                       lambda x: F.relu(x),
+                       self.layer1,
+                       self.layer2,
+                       self.layer3,
+                       lambda out: F.avg_pool2d(out, out.size()[3]),
+                       lambda out: out.view(out.size(0), -1),
+                       self.linear]
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
@@ -120,7 +135,7 @@ def test(net):
     for x in filter(lambda p: p.requires_grad, net.parameters()):
         total_params += np.prod(x.data.numpy().shape)
     print("Total number of params", total_params)
-    print("Total layers", len(list(filter(lambda p: p.requires_grad and len(p.data.size())>1, net.parameters()))))
+    print("Total layers", len(list(filter(lambda p: p.requires_grad and len(p.data.size()) > 1, net.parameters()))))
 
 
 if __name__ == "__main__":

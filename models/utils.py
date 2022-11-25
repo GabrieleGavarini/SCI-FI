@@ -1,5 +1,6 @@
 import copy
 from functools import reduce
+import types
 
 from typing import List
 
@@ -11,6 +12,30 @@ from torchvision import transforms
 from torchvision.datasets import CIFAR10
 
 from models.SmartLayers.SmartConv2d import SmartConv2d
+
+
+def smart_forward(self, x):
+    # Execute the layers iteratively, starting from the one where the fault is injected
+    layer_index = self.layers.index(self.starting_layer)
+    x = self.starting_convolutional_layer.get_golden_ifm()
+    for layer in self.layers[layer_index:]:
+        x = layer(x)
+
+
+    return x
+
+
+def replace_network_forward(network: Module) -> None:
+    """
+    Replace the network forward function with a smart version
+    :param network: The network to modify
+    """
+    # Add the starting layer attribute
+    network.starting_layer = None
+    network.starting_convolutional_layer = None
+
+    # Replace with the smart network function
+    network.forward = types.MethodType(smart_forward, network)
 
 
 def replace_conv_layers(network: Module,
@@ -78,10 +103,12 @@ def replace_conv_layers(network: Module,
         # Change the convolutional layer to its injectable counterpart
         setattr(container_layer, formatted_names[-1], faulty_convolutional_layer)
 
+    network.generate_layer_list()
+
     return injectable_layers
 
 
-def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1,test_image_per_class=None):
+def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1, test_image_per_class=None):
 
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),                                       # Crop the image to 32x32

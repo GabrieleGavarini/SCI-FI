@@ -52,6 +52,10 @@ class SmartConv2d(Module):
         self.__threshold = threshold
 
 
+    def get_golden_ifm(self):
+        return self.__golden_ifm
+
+
     def load_golden(self,
                     batch_id: int) -> None:
         """
@@ -61,8 +65,6 @@ class SmartConv2d(Module):
 
         self.__batch_id = batch_id
 
-        # Name of the ofm file
-        ofm_file_name = f'{self.__fm_folder}/ofm_batch_{self.__batch_id}_layer_{self.layer_name}.pt'
         # Name of the ifm file
         ifm_file_name = f'{self.__fm_folder}/ifm_batch_{self.__batch_id}_layer_{self.layer_name}.pt'
 

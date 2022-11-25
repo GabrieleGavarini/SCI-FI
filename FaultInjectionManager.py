@@ -50,12 +50,15 @@ class FaultInjectionManager:
     def run_faulty_campaign_on_weight(self,
                                       fault_list: list,
                                       fault_dropping: bool = True,
+                                      fault_delayed_start: bool = True,
                                       first_batch_only: bool = False):
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
         layer, loading the input feature maps of the previous layer
         :param fault_list: list of fault to inject
         :param fault_dropping: Default True. Whether to drop fault or not
+        :param fault_delayed_start: Default True. Whether to start the execution from the layer where the faults are
+        injected or not
         :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
         batch only
         """
@@ -88,13 +91,13 @@ class FaultInjectionManager:
                             ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
 
-                    if fault_dropping:
-                        # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
-
+                    if fault_dropping or fault_delayed_start:
                         # List of all the layer for which it is possible to compare the ofm
                         convolution_names = [convolution.layer_name for convolution in self.__smart_convolutions]
                         fault_layer_index = convolution_names.index(fault.layer_name)
 
+                    if fault_dropping:
+                        # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
                         for convolution in self.__smart_convolutions:
 
                             # Add the comparison for all the layers after the fault injection
@@ -120,6 +123,15 @@ class FaultInjectionManager:
 
                     # Inject faults in the weight
                     self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
+
+                    if fault_delayed_start:
+                        # Get the name of the first-tier layer containing the convolution where the fault is injected
+                        starting_layer = [(name, children) for name, children in self.network.named_children() if name in fault.layer_name][0]
+                        self.network.starting_layer = starting_layer[1]
+
+                        # Select the first convolutional layer inside the faulty first-tier layer
+                        self.network.starting_convolutional_layer = [convolution for convolution in self.__smart_convolutions
+                                                                     if starting_layer[0] in convolution.layer_name][0]
 
                     # Run inference on the current batch
                     faulty_prediction, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,

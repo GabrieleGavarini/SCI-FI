@@ -9,7 +9,7 @@ from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 
 from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
-from models.utils import load_from_dict, load_CIFAR10_datasets, replace_conv_layers
+from models.utils import load_from_dict, load_CIFAR10_datasets, replace_conv_layers, replace_network_forward
 
 from utils import get_device, parse_args
 
@@ -97,6 +97,7 @@ def main(args):
                                              device=device,
                                              fm_folder=fm_folder,
                                              threshold=args.threshold)
+    replace_network_forward(network=smart_network)
 
     # Execute the fault injection campaign with the smart network
     fault_injection_executor = FaultInjectionManager(network=smart_network,
@@ -107,7 +108,8 @@ def main(args):
                                                      clean_output=ofm_manager.clean_output)
 
     fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
-                                                           fault_dropping=True,
+                                                           fault_dropping=args.fault_dropping,
+                                                           fault_delayed_start=args.fault_delayed_start ,
                                                            first_batch_only=True)
 
     # Execute the fault injection campaign with the "dumb" network
@@ -120,6 +122,7 @@ def main(args):
 
     fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
                                                            fault_dropping=False,
+                                                           fault_delayed_start=False,
                                                            first_batch_only=True)
 
 
