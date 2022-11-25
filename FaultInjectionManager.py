@@ -88,7 +88,7 @@ class FaultInjectionManager:
                 faulty_prediction_dict = dict()
                 batch_clean_prediction_indices = [int(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).indices]
 
-                if fault_dropping:
+                if fault_dropping or fault_delayed_start:
                     # Move the corresponding ofm to the gpu
                     for convolution in self.__smart_convolutions:
                         convolution.load_golden(batch_id=batch_id)
@@ -100,8 +100,11 @@ class FaultInjectionManager:
                             ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
 
+                    # Correct the name in case it has been changed
+                    fault.layer_name = fault.layer_name.replace('._SmartConv2d__conv_layer', '')
+
                     # Change the description of the progress bar
-                    if fault_dropping or fault_delayed_start:
+                    if fault_dropping and fault_delayed_start:
                         pbar.set_description(f'FI (w/ drop & delayed) on b {batch_id}')
                     elif fault_dropping:
                         pbar.set_description(f'FI (w/ drop) on b {batch_id}')
@@ -125,18 +128,6 @@ class FaultInjectionManager:
                             else:
                                 convolution.do_not_compare_with_golden()
 
-                        # Only add the suffix for the smart convolution if it not already present (i.e. from the second
-                        # batch onward)
-                        if '._SmartConv2d__conv_layer' not in fault.layer_name:
-                            fault.layer_name = f'{fault.layer_name}._SmartConv2d__conv_layer'
-                    else:
-                        # Correct the layer name in case it has been changed
-                        fault.layer_name = fault.layer_name.replace('._SmartConv2d__conv_layer', '')
-
-
-                    # Inject faults in the weight
-                    self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
-
                     if fault_delayed_start:
                         # Get the name of the first-tier layer containing the convolution where the fault is injected
                         starting_layer = [(name, children) for name, children in self.network.named_children() if name in fault.layer_name][0]
@@ -145,6 +136,15 @@ class FaultInjectionManager:
                         # Select the first convolutional layer inside the faulty first-tier layer
                         self.network.starting_convolutional_layer = [convolution for convolution in self.__smart_convolutions
                                                                      if starting_layer[0] in convolution.layer_name][0]
+
+                    if fault_dropping or fault_delayed_start:
+                        # Only add the suffix for the smart convolution if it not already present (i.e. from the second
+                        # batch onward)
+                        if '._SmartConv2d__conv_layer' not in fault.layer_name:
+                            fault.layer_name = f'{fault.layer_name}._SmartConv2d__conv_layer'
+
+                    # Inject faults in the weight
+                    self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
 
                     # Run inference on the current batch
                     faulty_prediction, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,

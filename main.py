@@ -89,28 +89,34 @@ def main(args):
     fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
                                                      save_fault_list=True)
 
-    # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
-    smart_network = network
+    for fault_dropping, fault_delayed_start in reversed(list(itertools.product([True, False], repeat=2))):
+        # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
+        smart_network = copy.deepcopy(network)
 
-    print(f'Fault dropping on {args.network_name} (threshold: {args.threshold})')
+        print(f'Fault dropping on {args.network_name} (threshold: {args.threshold})')
 
-    # Replace the convolutional layers
-    smart_convolutions = replace_conv_layers(network=smart_network,
-                                             device=device,
-                                             fm_folder=fm_folder,
-                                             threshold=args.threshold)
-    replace_network_forward(network=smart_network)
-
-    # Execute the fault injection campaign with the smart network
-    fault_injection_executor = FaultInjectionManager(network=smart_network,
-                                                     network_name=f'Smart{args.network_name}',
+        # Replace the convolutional layers
+        if fault_dropping or fault_delayed_start:
+            smart_convolutions = replace_conv_layers(network=smart_network,
                                                      device=device,
-                                                     smart_convolutions=smart_convolutions,
-                                                     loader=test_loader,
-                                                     clean_output=ofm_manager.clean_output)
+                                                     fm_folder=fm_folder,
+                                                     threshold=args.threshold)
+        else:
+            smart_convolutions = None
 
-    for fault_dropping, fault_delayed_start in itertools.product([True, False], repeat=2):
-        elapsed_time = fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
+        # Replace with the smart function
+        if fault_delayed_start:
+            replace_network_forward(network=smart_network)
+
+        # Execute the fault injection campaign with the smart network
+        fault_injection_executor = FaultInjectionManager(network=smart_network,
+                                                         network_name=f'Smart{args.network_name}',
+                                                         device=device,
+                                                         smart_convolutions=smart_convolutions,
+                                                         loader=test_loader,
+                                                         clean_output=ofm_manager.clean_output)
+
+        elapsed_time = fault_injection_executor.run_faulty_campaign_on_weight(fault_list=copy.deepcopy(fault_list),
                                                                               fault_dropping=fault_dropping,
                                                                               fault_delayed_start=fault_delayed_start,
                                                                               first_batch_only=True)
