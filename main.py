@@ -90,10 +90,13 @@ def main(args):
                                                      save_fault_list=True)
 
     for fault_dropping, fault_delayed_start in reversed(list(itertools.product([True, False], repeat=2))):
+
+        if not args.forbid_cuda and args.use_cuda:
+            print('Clearing cache')
+            torch.cuda.empty_cache()
+
         # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
         smart_network = copy.deepcopy(network)
-
-        print(f'Fault dropping on {args.network_name} (threshold: {args.threshold})')
 
         # Replace the convolutional layers
         if fault_dropping or fault_delayed_start:
