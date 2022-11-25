@@ -1,6 +1,8 @@
 import copy
 import os
 import shutil
+import csv
+import itertools
 
 import torch
 
@@ -88,7 +90,7 @@ def main(args):
                                                      save_fault_list=True)
 
     # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
-    smart_network = copy.deepcopy(network)
+    smart_network = network
 
     print(f'Fault dropping on {args.network_name} (threshold: {args.threshold})')
 
@@ -107,23 +109,24 @@ def main(args):
                                                      loader=test_loader,
                                                      clean_output=ofm_manager.clean_output)
 
-    fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
-                                                           fault_dropping=args.fault_dropping,
-                                                           fault_delayed_start=args.fault_delayed_start ,
-                                                           first_batch_only=True)
+    for fault_dropping, fault_delayed_start in itertools.product([True, False], repeat=2):
+        elapsed_time = fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
+                                                                              fault_dropping=fault_dropping,
+                                                                              fault_delayed_start=fault_delayed_start,
+                                                                              first_batch_only=True)
 
-    # Execute the fault injection campaign with the "dumb" network
-    fault_injection_executor = FaultInjectionManager(network=network,
-                                                     network_name=args.network_name,
-                                                     device=device,
-                                                     smart_convolutions=smart_convolutions,
-                                                     loader=test_loader,
-                                                     clean_output=ofm_manager.clean_output)
+        if not args.no_log_results:
+            os.makedirs('log', exist_ok=True)
+            log_path = f'log/{args.network_name}.csv'
+            with open(log_path, 'a') as file_log:
+                writer = csv.writer(file_log)
 
-    fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
-                                                           fault_dropping=False,
-                                                           fault_delayed_start=False,
-                                                           first_batch_only=True)
+                # For the first row write the header first
+                if os.stat(log_path).st_size == 0:
+                    writer.writerow(['Batch Size', 'Fault Dropping', 'Fault Delayed Start', 'Time'])
+
+                # Log the results of the fault injection campaign
+                writer.writerow([args.batch_size, fault_dropping, fault_delayed_start, elapsed_time])
 
 
 if __name__ == '__main__':

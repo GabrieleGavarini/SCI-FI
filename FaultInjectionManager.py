@@ -1,4 +1,7 @@
 import shutil
+import time
+import math
+from datetime import timedelta
 
 import torch
 from torch.nn import Module
@@ -51,7 +54,7 @@ class FaultInjectionManager:
                                       fault_list: list,
                                       fault_dropping: bool = True,
                                       fault_delayed_start: bool = True,
-                                      first_batch_only: bool = False):
+                                      first_batch_only: bool = False) -> str:
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
         layer, loading the input feature maps of the previous layer
@@ -61,6 +64,8 @@ class FaultInjectionManager:
         injected or not
         :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
         batch only
+        :return: A string containing the formatted time elapsed from the beginning to the end of the fault injection
+        campaign
         """
 
         self.skipped_inferences = 0
@@ -70,6 +75,10 @@ class FaultInjectionManager:
         total_predictions = 0
 
         with torch.no_grad():
+
+            # Start measuring the time elapsed
+            start_time = time.time()
+
 
             # Cycle all the batches in the data loader
             for batch_id, batch in enumerate(self.loader):
@@ -91,12 +100,19 @@ class FaultInjectionManager:
                             ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
 
+                    # Change the description of the progress bar
                     if fault_dropping or fault_delayed_start:
+                        pbar.set_description(f'FI (w/ drop & delayed) on b {batch_id}')
+                    elif fault_dropping:
+                        pbar.set_description(f'FI (w/ drop) on b {batch_id}')
+                    elif fault_delayed_start:
+                        pbar.set_description(f'FI (w/ delayed) on b {batch_id}')
+
+                    if fault_dropping:
                         # List of all the layer for which it is possible to compare the ofm
                         convolution_names = [convolution.layer_name for convolution in self.__smart_convolutions]
                         fault_layer_index = convolution_names.index(fault.layer_name)
 
-                    if fault_dropping:
                         # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
                         for convolution in self.__smart_convolutions:
 
@@ -109,9 +125,6 @@ class FaultInjectionManager:
                             else:
                                 convolution.do_not_compare_with_golden()
 
-
-                        # Change the description of the progress bar
-                        pbar.set_description(f'FI (w/ drop) on b {batch_id}')
                         # Only add the suffix for the smart convolution if it not already present (i.e. from the second
                         # batch onward)
                         if '._SmartConv2d__conv_layer' not in fault.layer_name:
@@ -167,6 +180,10 @@ class FaultInjectionManager:
                 if fault_dropping:
                     for convolution in self.__smart_convolutions:
                         convolution.unload_golden_ofm()
+
+        elapsed = math.ceil(time.time() - start_time)
+
+        return str(timedelta(seconds=elapsed))
 
 
     def __run_inference_on_batch(self,
