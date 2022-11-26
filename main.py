@@ -11,9 +11,11 @@ from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 
 from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
-from models.utils import load_from_dict, load_CIFAR10_datasets, replace_conv_layers, replace_network_forward
+from models.utils import load_from_dict, load_CIFAR10_datasets
 
-from utils import get_device, parse_args
+from models.SmartLayers.SmartLayersManager import SmartLayersManager
+
+from utils import get_device, parse_args, UnknownNetworkException
 
 
 def main(args):
@@ -98,18 +100,36 @@ def main(args):
         # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
         smart_network = copy.deepcopy(network)
 
+        # If fault delayed start is enabled, set the module where this function is enabled, otherwise set the module
+        # to None
+        if fault_delayed_start:
+            # The module to change is dependent on the network. This is the module for which to enable delayed start
+            if 'ResNet' in args.network_name:
+                delayed_start_module = smart_network
+            elif 'DenseNet' in args.network_name:
+                delayed_start_module = smart_network.features
+            else:
+                raise UnknownNetworkException
+        else:
+            delayed_start_module = None
+
         # Replace the convolutional layers
         if fault_dropping or fault_delayed_start:
-            smart_convolutions = replace_conv_layers(network=smart_network,
-                                                     device=device,
-                                                     fm_folder=fm_folder,
-                                                     threshold=args.threshold)
+
+            smart_layers_manager = SmartLayersManager(network=smart_network,
+                                                      module=delayed_start_module)
+
+            # Replace the convolutional layers of the network
+            smart_convolutions = smart_layers_manager.replace_conv_layers(device=device,
+                                                                          fm_folder=fm_folder,
+                                                                          threshold=args.threshold)
+
+            if fault_delayed_start:
+                # Replace the forward module of the target module to enable delayed start
+                smart_layers_manager.replace_module_forward()
         else:
             smart_convolutions = None
 
-        # Replace with the smart function
-        if fault_delayed_start:
-            replace_network_forward(network=smart_network)
 
         # Execute the fault injection campaign with the smart network
         fault_injection_executor = FaultInjectionManager(network=smart_network,
@@ -122,6 +142,7 @@ def main(args):
         elapsed_time = fault_injection_executor.run_faulty_campaign_on_weight(fault_list=copy.deepcopy(fault_list),
                                                                               fault_dropping=fault_dropping,
                                                                               fault_delayed_start=fault_delayed_start,
+                                                                              delayed_start_module=delayed_start_module,
                                                                               first_batch_only=True)
 
         if not args.no_log_results:

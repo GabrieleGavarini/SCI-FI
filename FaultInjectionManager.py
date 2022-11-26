@@ -54,6 +54,7 @@ class FaultInjectionManager:
                                       fault_list: list,
                                       fault_dropping: bool = True,
                                       fault_delayed_start: bool = True,
+                                      delayed_start_module: Module = None,
                                       first_batch_only: bool = False) -> str:
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
@@ -62,6 +63,9 @@ class FaultInjectionManager:
         :param fault_dropping: Default True. Whether to drop fault or not
         :param fault_delayed_start: Default True. Whether to start the execution from the layer where the faults are
         injected or not
+        :param delayed_start_module: Default None. If specified, the module where delayed start is enable. If
+        fault_delayed_start = True and this is set to None, the module where delayed start is enabled is assumed to be
+        the network
         :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
         batch only
         :return: A string containing the formatted time elapsed from the beginning to the end of the fault injection
@@ -129,14 +133,18 @@ class FaultInjectionManager:
                                 convolution.do_not_compare_with_golden()
 
                     if fault_delayed_start:
+                        # The module where delayed start is enabled
+                        if delayed_start_module is None:
+                            delayed_start_module = self.network
                         # Get the name of the first-tier layer containing the convolution where the fault is injected
-                        starting_layer = [(name, children) for name, children in self.network.named_children() if name in fault.layer_name][0]
-                        self.network.starting_layer = starting_layer[1]
+                        starting_layer = [(name, children) for name, children in delayed_start_module.named_children() if name in fault.layer_name][0]
+                        delayed_start_module.starting_layer = starting_layer[1]
 
                         # Select the first convolutional layer inside the faulty first-tier layer
-                        self.network.starting_convolutional_layer = [convolution for convolution in self.__smart_convolutions
-                                                                     if starting_layer[0] in convolution.layer_name][0]
+                        delayed_start_module.starting_convolutional_layer = [convolution for convolution in self.__smart_convolutions
+                                                                             if starting_layer[0] in convolution.layer_name][0]
 
+                    # Add the suffix to account for the replaced convolutional layers
                     if fault_dropping or fault_delayed_start:
                         # Only add the suffix for the smart convolution if it not already present (i.e. from the second
                         # batch onward)

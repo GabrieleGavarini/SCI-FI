@@ -9,6 +9,10 @@ import torch
 import argparse
 
 
+class UnknownNetworkException(Exception):
+    pass
+
+
 def parse_args():
     """
     Parse the argument of the network
