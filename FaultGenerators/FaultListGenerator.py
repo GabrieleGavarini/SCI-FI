@@ -5,21 +5,30 @@ from tqdm import tqdm
 import numpy as np
 from ast import literal_eval as make_tuple
 
+from typing import Type
+
 from FaultGenerators.WeightFault import WeightFault
+
+from torch.nn import Module, Conv2d
+import torch
 
 
 class FaultListGenerator:
 
     def __init__(self,
-                 network,
-                 network_name,
-                 injectable_layer_names,
-                 device):
-        
+                 network: Module,
+                 network_name: str,
+                 device: torch.device,
+                 module_classes: Type[Module] = Conv2d):
+
         self.network = network
         self.network_name = network_name
 
         self.device = device
+
+        # Name of the injectable layers
+        injectable_layer_names = [name.replace('.weight', '') for name, module in self.network.named_modules()
+                                  if isinstance(module, module_classes)]
 
         # List of the shape of all the layers that contain weight
         self.net_layer_shape = {name.replace('.weight', ''): param.shape for name, param in self.network.named_parameters()
@@ -100,7 +109,7 @@ class FaultListGenerator:
                                       p=p,
                                       e=e,
                                       t=t)
-            fault_list = random_generator.choice(exhaustive_fault_list, int(n))
+            fault_list = random_generator.choice(exhaustive_fault_list, int(n), replace=False)
             del exhaustive_fault_list
             fault_list = [WeightFault(layer_name=fault[0],
                                       tensor_index=tuple([int(i) for i in fault[1:-1]if i is not None]),
