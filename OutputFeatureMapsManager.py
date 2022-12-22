@@ -1,3 +1,5 @@
+import os
+
 import torch
 from torch.nn.modules import Module
 from torch.utils.data import DataLoader
@@ -5,6 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 
+from typing import Tuple, Type
 import pickle
 
 
@@ -13,6 +16,7 @@ class OutputFeatureMapsManager:
     def __init__(self,
                  network: Module,
                  loader: DataLoader,
+                 module_classes: Tuple[Type[Module]] or Type[Module],
                  device: torch.device,
                  fm_folder: str,
                  clean_output_folder: str):
@@ -20,6 +24,7 @@ class OutputFeatureMapsManager:
         Manges the recording of output feature maps for a given network on a given database
         :param network: The network to analyze
         :param loader: the data loader for which to save the output feature maps
+        :param module_classes: The class (or tuple of classes) of the module for which to save the feature maps
         :param device: The device where to perform the inference
         :param clean_output_folder: The folder where to load/store the clean output of the network
         :param fm_folder: The folder containing the input and output feature maps
@@ -40,14 +45,14 @@ class OutputFeatureMapsManager:
 
         # A list of all the possible layers. This list is equivalent to all the keys from __output_feature_maps
         self.feature_maps_layer_names = [name.replace('.weight', '') for name, module in self.network.named_modules()
-                                         if isinstance(module, torch.nn.Conv2d)]
+                                         if isinstance(module, module_classes)]
         self.feature_maps_layers = [module for name, module in self.network.named_modules()
                                     if name.replace('.weight', '') in self.feature_maps_layer_names]
 
         # A list of dictionary where every element is the file containing the output feature map for a batch and for the
         # layer
+        os.makedirs(fm_folder, exist_ok=True)
         self.ifm_paths = [{j: f'./{fm_folder}/ifm_batch_{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
-        self.ofm_paths = [{j: f'./{fm_folder}/ofm_batch_{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
 
         # An integer indicating the number of bytes occupied by the Output Feature Maps (without taking into account
         # the overhead required by the lists and the dictionary)
@@ -89,10 +94,6 @@ class OutputFeatureMapsManager:
             # Save the input feature map
             with open(self.ifm_paths[batch_id][layer_name], 'wb') as ifm_file:
                 pickle.dump(input_to_save, ifm_file)
-
-            # Save the output feature map
-            with open(self.ofm_paths[batch_id][layer_name], 'wb') as ofm_file:
-                pickle.dump(output_to_save, ofm_file)
 
             # Update information about the memory occupation
             self.__input_feature_maps_size += input_to_save.nelement() * input_to_save.element_size()

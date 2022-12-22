@@ -1,12 +1,14 @@
 import os
+import argparse
 
 import numpy as np
 import pandas as pd
 
 import torch
 
-
-import argparse
+from models.utils import load_from_dict
+from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights, densenet121, DenseNet121_Weights
 
 
 class UnknownNetworkException(Exception):
@@ -38,13 +40,68 @@ def parse_args():
                         help='Test set batch size')
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
-                        choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202'])
+                        choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
+                                 'DenseNet121',
+                                 'EfficientNet'])
     parser.add_argument('--threshold', type=float, default=0.0,
                         help='The threshold under which an error is undetected')
 
     parsed_args = parser.parse_args()
 
     return parsed_args
+
+
+def load_network(network_name: str,
+                 device: torch.device) -> torch.nn.Module:
+    """
+    Load the network with the specified name
+    :param network_name: The name of the network to load
+    :param device: the device where to load the network
+    :return: The loaded network
+    """
+
+    if 'ResNet' in network_name:
+        if network_name == 'ResNet20':
+            network_function = resnet20
+        elif network_name == 'ResNet32':
+            network_function = resnet32
+        elif network_name == 'ResNet44':
+            network_function = resnet44
+        elif network_name == 'ResNet56':
+            network_function = resnet56
+        elif network_name == 'ResNet110':
+            network_function = resnet110
+        elif network_name == 'ResNet1202':
+            network_function = resnet1202
+        else:
+            raise UnknownNetworkException(f'ERROR: unknown version of ResNet: {network_name}')
+
+        # Instantiate the network
+        network = network_function()
+
+        # Load the weights
+        network_path = f'models/pretrained_models/{network_name}.th'
+
+        load_from_dict(network=network,
+                       device=device,
+                       path=network_path)
+    elif 'DenseNet' in network_name:
+        if network_name == 'DenseNet121':
+            network = densenet121(weights=DenseNet121_Weights.DEFAULT)
+        else:
+            raise UnknownNetworkException(f'ERROR: unknown version of DenseNet: {network_name}')
+
+    elif network_name == 'EfficientNet':
+        network = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+
+    else:
+        raise UnknownNetworkException(f'ERROR: unknown network: {network_name}')
+
+    # Send network to device and set for inference
+    network.to(device)
+    network.eval()
+
+    return network
 
 
 def get_device(forbid_cuda: bool,
@@ -79,12 +136,16 @@ def get_device(forbid_cuda: bool,
 
 def formatted_print(fault_list: list,
                     network_name: str,
+                    batch_size: int,
                     batch_id: int,
-                    faulty_prediction_dict: dict) -> None:
+                    faulty_prediction_dict: dict,
+                    fault_dropping: bool = False,
+                    fault_delayed_start: bool = False) -> None:
     """
     A function that prints to csv the results of the fault injection campaign on a single batch
     :param fault_list: A list of the faults
     :param network_name: The name of the network
+    :param batch_size: The size of the batch of the data loader
     :param batch_id: The id of the batch
     :param faulty_prediction_dict: A dictionary where the key is the fault index and the value is a list of all the
     top_1 prediction for all the image of the given the batch
@@ -118,7 +179,8 @@ def formatted_print(fault_list: list,
             fault_id,
             batch_id,
             prediction_id,
-            prediction
+            prediction[0],
+            prediction[1],
         ]
         for fault_id in faulty_prediction_dict for prediction_id, prediction in enumerate(faulty_prediction_dict[fault_id])
     ]
@@ -127,7 +189,8 @@ def formatted_print(fault_list: list,
         'Fault_ID',
         'Batch_ID',
         'Image_ID',
-        'Top_1'
+        'Top_1',
+        'Top_Score',
     ]
 
     fault_list_df = pd.DataFrame(fault_list_rows, columns=fault_list_columns)
@@ -135,5 +198,11 @@ def formatted_print(fault_list: list,
 
     complete_df = fault_list_df.merge(prediction_df, on='Fault_ID')
 
-    os.makedirs(f'output/fault_campaign_results/{network_name}', exist_ok=True)
-    complete_df.to_csv(f'output/fault_campaign_results/{network_name}/fault_injection_batch_{batch_id}.csv', index=False)
+    file_prefix = 'combined_' if fault_dropping and fault_delayed_start \
+        else 'delayed_' if fault_delayed_start \
+        else 'dropping_' if fault_dropping \
+        else ''
+
+    output_folder = f'output/fault_campaign_results/{network_name}/{batch_size}'
+    os.makedirs(output_folder, exist_ok=True)
+    complete_df.to_csv(f'{output_folder}/{file_prefix}fault_injection_batch_{batch_id}.csv', index=False)

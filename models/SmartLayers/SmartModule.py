@@ -7,10 +7,10 @@ from torch.nn import Module, Conv2d
 from models.SmartLayers.utils import check_difference
 
 
-class SmartConv2d(Module):
+class SmartModule(Module):
 
     def __init__(self,
-                 conv_layer: Conv2d,
+                 module: Module,
                  device: torch.device,
                  input_size: torch.Size,
                  output_size: torch.Size,
@@ -19,18 +19,18 @@ class SmartConv2d(Module):
                  fm_folder: str,
                  threshold: float = 0) -> None:
 
-        super(SmartConv2d, self).__init__()
+        super(SmartModule, self).__init__()
 
         # The masked convolutional layer
-        self.__conv_layer = conv_layer
+        self.__module = module
 
         # The device used for inference
         self.__device = device
 
         # Size of input, output and kernel tensors
-        self.__output_size = output_size
-        self.__input_size = input_size
-        self.__kernel_size = kernel_size
+        self.output_size = output_size
+        self.input_size = input_size
+        self.kernel_size = kernel_size
 
         # The id of the batch currently used for inference
         self.__batch_id = None
@@ -43,10 +43,12 @@ class SmartConv2d(Module):
 
         # The golden input/output of the layer
         self.__golden_ifm = None
-        self.__golden_ofm = None
 
         # Whether the output of this layer should be compared with the golden output
-        self.__compare_ofm_with_golden = False
+        self.__compare_ifm_with_golden = False
+
+        # Whether to use the input from the previous layer or the input from the saved ifm
+        self.__start_from_this_layer = False
 
         # The threshold under which a fault ha no impact
         self.__threshold = threshold
@@ -72,29 +74,42 @@ class SmartConv2d(Module):
         with open(ifm_file_name, 'rb') as ifm_file:
             self.__golden_ifm = pickle.load(ifm_file).to(self.__device)
 
+    def unload_golden(self) -> None:
+        """
+        Delete all the stored golden ifm
+        """
+        if self.__golden_ifm is not None:
+            del self.__golden_ifm
+            self.__golden_ifm = None
+
+
+    def start_from_this_layer(self) -> None:
+        """
+        Mark this layer as the initial one for starting the inference, meaning that the input of the layer is not the
+        output of the previous layer but the value of the ifm
+        """
+        self.__start_from_this_layer = True
+
+    def do_not_start_from_this_layer(self) -> None:
+        """
+        Mark this layer as not the initial one for the inference, meaning that the input of the layer is the output of
+        the previous layer
+        """
+        self.__start_from_this_layer = False
 
     def compare_with_golden(self) -> None:
         """
         Mark the layer as comparable, so that the faulty output is compared with the golden output at run time
         """
         # Mark the layer as comparable
-        self.__compare_ofm_with_golden = True
+        self.__compare_ifm_with_golden = True
 
 
     def do_not_compare_with_golden(self) -> None:
         """
         Mark the layer as non-comparable
         """
-        self.__compare_ofm_with_golden = False
-
-    def unload_golden_ofm(self) -> None:
-        """
-        Delete all the stored golden ofm
-        """
-        if self.__golden_ofm is not None:
-            del self.__golden_ofm
-            self.__golden_ofm = None
-
+        self.__compare_ifm_with_golden = False
 
     def forward(self,
                 input_tensor: Tensor) -> Tensor:
@@ -104,13 +119,17 @@ class SmartConv2d(Module):
         :return: The output tensor of the layer
         """
 
-        # Check for difference with the golden input, if the layer is marked
-        check_difference(check_control=self.__compare_ofm_with_golden,
-                         golden=self.__golden_ifm,
-                         faulty=input_tensor,
-                         threshold=self.__threshold)
+        if self.__start_from_this_layer:
+            input_tensor = self.__golden_ifm
+        else:
+            # Check for difference with the golden input, if the layer is marked
+            # TODO: check only if the value is under the threshold?
+            check_difference(check_control=self.__compare_ifm_with_golden,
+                             golden=self.__golden_ifm,
+                             faulty=input_tensor,
+                             threshold=self.__threshold)
 
         # Compute convolutional output
-        conv_output = self.__conv_layer(input_tensor)
+        output_tensor = self.__module(input_tensor)
 
-        return conv_output
+        return output_tensor

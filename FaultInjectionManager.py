@@ -2,6 +2,7 @@ import shutil
 import time
 import math
 from datetime import timedelta
+import re
 
 import torch
 from torch.nn import Module
@@ -15,7 +16,7 @@ from utils import formatted_print
 
 from typing import List
 
-from models.SmartLayers.SmartConv2d import SmartConv2d
+from models.SmartLayers.SmartModule import SmartModule
 
 
 class FaultInjectionManager:
@@ -23,7 +24,7 @@ class FaultInjectionManager:
     def __init__(self,
                  network: Module,
                  network_name: str,
-                 smart_convolutions: List[SmartConv2d],
+                 smart_modules_list: List[SmartModule],
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor):
@@ -38,8 +39,8 @@ class FaultInjectionManager:
         # The network truncated from a starting layer
         self.faulty_network = None
 
-        # The smart convolution layers
-        self.__smart_convolutions = smart_convolutions
+        # The smart modules in the network
+        self.__smart_modules_list = smart_modules_list
 
 
         # The number of total inferences and the number of skipped inferences
@@ -55,7 +56,7 @@ class FaultInjectionManager:
                                       fault_dropping: bool = True,
                                       fault_delayed_start: bool = True,
                                       delayed_start_module: Module = None,
-                                      first_batch_only: bool = False) -> str:
+                                      first_batch_only: bool = False) -> (str, int):
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
         layer, loading the input feature maps of the previous layer
@@ -68,8 +69,8 @@ class FaultInjectionManager:
         the network
         :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
         batch only
-        :return: A string containing the formatted time elapsed from the beginning to the end of the fault injection
-        campaign
+        :return: A tuple formed by : (i) a string containing the formatted time elapsed from the beginning to the end of
+        the fault injection campaign, (ii) an integer measuring the average memory occupied (in MB)
         """
 
         self.skipped_inferences = 0
@@ -77,6 +78,9 @@ class FaultInjectionManager:
 
         total_different_predictions = 0
         total_predictions = 0
+
+        average_memory_occupation = 0
+        total_iterations = 1
 
         with torch.no_grad():
 
@@ -90,22 +94,20 @@ class FaultInjectionManager:
                 data = data.to(self.device)
 
                 faulty_prediction_dict = dict()
+                batch_clean_prediction_scores = [float(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).values]
                 batch_clean_prediction_indices = [int(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).indices]
 
                 if fault_dropping or fault_delayed_start:
                     # Move the corresponding ofm to the gpu
-                    for convolution in self.__smart_convolutions:
-                        convolution.load_golden(batch_id=batch_id)
+                    for smart_module in self.__smart_modules_list:
+                        smart_module.load_golden(batch_id=batch_id)
 
                 # Inject all the faults in a single batch
                 pbar = tqdm(fault_list,
                             colour='green',
                             desc=f'FI on b {batch_id}',
-                            ncols=shutil.get_terminal_size().columns * 2)
+                            ncols=shutil.get_terminal_size().columns)
                 for fault_id, fault in enumerate(pbar):
-
-                    # Correct the name in case it has been changed
-                    fault.layer_name = fault.layer_name.replace('._SmartConv2d__conv_layer', '')
 
                     # Change the description of the progress bar
                     if fault_dropping and fault_delayed_start:
@@ -117,68 +119,99 @@ class FaultInjectionManager:
 
                     if fault_dropping:
                         # List of all the layer for which it is possible to compare the ofm
-                        convolution_names = [convolution.layer_name for convolution in self.__smart_convolutions]
-                        fault_layer_index = convolution_names.index(fault.layer_name)
+                        smart_modules_names = [module.layer_name for module in self.__smart_modules_list]
+                        try:
+                            fault_layer_index = [fault.layer_name.startswith(smart_module_name) for smart_module_name in smart_modules_names].index(True)
+                        except ValueError:
+                            # These are layers that are injectable but not inside any of the smart module
+                            continue
+                        # fault_layer_index = smart_modules_names.index(fault.layer_name.replace('._SmartModule__module', ''))
 
                         # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
-                        for convolution in self.__smart_convolutions:
+                        for smart_module in self.__smart_modules_list:
 
-                            # Add the comparison for all the layers after the fault injection
-                            if convolution.layer_name in convolution_names[fault_layer_index+1:fault_layer_index+2]:
-                                convolution.compare_with_golden()
+                            # Add the comparison for the layer after the fault injection
+                            if fault_layer_index < len(smart_modules_names) - 1 and smart_module.layer_name == smart_modules_names[fault_layer_index + 1]:
+                                smart_module.compare_with_golden()
 
                             # Remove the comparison with golden for all the layer previous to the computation of the faulty
                             # layer
                             else:
-                                convolution.do_not_compare_with_golden()
+                                smart_module.do_not_compare_with_golden()
 
                     if fault_delayed_start:
-                        # The module where delayed start is enabled
-                        if delayed_start_module is None:
-                            delayed_start_module = self.network
-                        # Get the name of the first-tier layer containing the convolution where the fault is injected
-                        starting_layer = [(name, children) for name, children in delayed_start_module.named_children() if name in fault.layer_name][0]
-                        delayed_start_module.starting_layer = starting_layer[1]
+                        # Do this only if the fault is injected inside one of the layer that allow delayed start
+                        if '._SmartModule__module' in fault.layer_name:
 
-                        # Select the first convolutional layer inside the faulty first-tier layer
-                        delayed_start_module.starting_convolutional_layer = [convolution for convolution in self.__smart_convolutions
-                                                                             if starting_layer[0] in convolution.layer_name][0]
+                            # The module where delayed start is enabled
+                            if delayed_start_module is None:
+                                delayed_start_module = self.network
 
-                    # Add the suffix to account for the replaced convolutional layers
-                    if fault_dropping or fault_delayed_start:
-                        # Only add the suffix for the smart convolution if it not already present (i.e. from the second
-                        # batch onward)
-                        if '._SmartConv2d__conv_layer' not in fault.layer_name:
-                            fault.layer_name = f'{fault.layer_name}._SmartConv2d__conv_layer'
+                            # Get the name of the first-tier layer containing the module where the fault is injected
+                            # TODO: add the fact that fault.layer_name start with 'delayed_start_module.name + name'
+                            starting_layer = [(name, children) for name, children in delayed_start_module.named_children()
+                                              # if fault.layer_name.split('_SmartModule__module.')[-1].startswith(name)][0]
+                                              # if fault.layer_name.startswith(name)][0]
+                                              if name in fault.layer_name][0]
+
+                            delayed_start_module.starting_layer = starting_layer[1]
+
+                            # Select the first smart module inside the faulty first-tier layer
+                            delayed_start_module.starting_module = [module for module in self.__smart_modules_list
+                                                                    if module in [m for m in delayed_start_module.starting_layer.modules()]][0]
+                                                                    # if starting_layer[0] in module.layer_name][0]
+
+                            assert delayed_start_module.starting_module in [m for m in delayed_start_module.starting_layer.modules()]
+                        else:
+                            # If the fault is injected in a non-smart layer, then starting_layer and starting_module
+                            # should be None
+                            delayed_start_module.starting_layer = None
+                            delayed_start_module.starting_module = None
 
                     # Inject faults in the weight
                     self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
 
+                    # Reset memory occupation stats
+                    torch.cuda.reset_peak_memory_stats()
+
                     # Run inference on the current batch
-                    faulty_prediction, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,
-                                                                                             data=data)
+                    faulty_scores, faulty_indices, different_predictions = self.__run_inference_on_batch(batch_id=batch_id,
+                                                                                                         data=data)
+
+                    # Measure the memory occupation
+                    memory_occupation = (torch.cuda.max_memory_allocated() + torch.cuda.max_memory_reserved()) // (1024**2)
+                    average_memory_occupation = ((total_iterations - 1) * average_memory_occupation + memory_occupation) // total_iterations
 
                     # If fault prediction is None, the fault had no impact. Use golden predictions
-                    if faulty_prediction is None:
-                        faulty_prediction = batch_clean_prediction_indices
+                    if faulty_indices is None:
+                        faulty_scores = batch_clean_prediction_scores
+                        faulty_indices = batch_clean_prediction_indices
 
-                    faulty_prediction_dict[fault_id] = faulty_prediction
+                    faulty_prediction_dict[fault_id] = tuple(zip(faulty_indices, faulty_scores))
                     total_different_predictions += different_predictions
 
                     # Measure the loss in accuracy
                     total_predictions += len(batch[0])
                     different_predictions_percentage = 100 * total_different_predictions / total_predictions
                     pbar.set_postfix({'Different': f'{different_predictions_percentage:.4f}%',
-                                      'Skipped': f'{100*self.skipped_inferences/self.total_inferences:.2f}%'})
+                                      'Skipped': f'{100*self.skipped_inferences/self.total_inferences:.2f}%',
+                                      'Avg. memory': f'{average_memory_occupation} MB'}
+                                     )
 
                     # Restore the golden value
                     self.weight_fault_injector.restore_golden()
 
+                    # Increment the iteration count
+                    total_iterations += 1
+
                 # Print results to file
                 formatted_print(fault_list=fault_list,
+                                batch_size=self.loader.batch_size,
                                 batch_id=batch_id,
                                 network_name=self.network_name,
-                                faulty_prediction_dict=faulty_prediction_dict)
+                                faulty_prediction_dict=faulty_prediction_dict,
+                                fault_dropping=fault_dropping,
+                                fault_delayed_start=fault_delayed_start)
 
                 # End after only one batch if the option is specified
                 if first_batch_only:
@@ -186,12 +219,12 @@ class FaultInjectionManager:
 
                 # Remove all the loaded golden output feature map
                 if fault_dropping:
-                    for convolution in self.__smart_convolutions:
-                        convolution.unload_golden_ofm()
+                    for smart_module in self.__smart_modules_list:
+                        smart_module.unload_golden()
 
         elapsed = math.ceil(time.time() - start_time)
 
-        return str(timedelta(seconds=elapsed))
+        return str(timedelta(seconds=elapsed)), average_memory_occupation
 
 
     def __run_inference_on_batch(self,
@@ -204,20 +237,22 @@ class FaultInjectionManager:
             clean_prediction = torch.topk(self.clean_output[batch_id], k=1)
 
             # Measure the different predictions
-            different_predictions = int(torch.ne(faulty_prediction.indices, clean_prediction.indices).sum())
+            different_predictions = int(torch.ne(faulty_prediction.values, clean_prediction.values).sum())
 
+            faulty_prediction_scores = [float(fault) for fault in faulty_prediction.values]
             faulty_prediction_indices = [int(fault) for fault in faulty_prediction.indices]
 
         except NoChangeOFMException:
             # If the fault doesn't change the output feature map, then simply say that the fault doesn't worsen the
             # network performances for this batch
+            faulty_prediction_scores = None
             faulty_prediction_indices = None
             different_predictions = 0
             self.skipped_inferences += 1
 
         self.total_inferences += 1
 
-        return faulty_prediction_indices, different_predictions
+        return faulty_prediction_scores, faulty_prediction_indices, different_predictions
 
     def __inject_fault_on_weight(self,
                                  fault,

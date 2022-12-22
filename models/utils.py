@@ -1,7 +1,62 @@
+import os
+
+from tqdm import tqdm
+
 import torch
 from torch.utils.data import TensorDataset
 from torchvision import transforms
-from torchvision.datasets import CIFAR10
+from torchvision.datasets import CIFAR10, ImageNet
+
+
+def load_ImageNet_validation_set(batch_size,
+                                 image_per_class=None,
+                                 imagenet_folder='~/Datasets/ImageNet'):
+
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
+    transform_validation = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+    validation_dataset_folder = 'tmp'
+    validation_dataset_path = f'{validation_dataset_folder}/imagenet_{image_per_class}.pt'
+
+    try:
+        if image_per_class is None:
+            raise FileNotFoundError
+
+        validation_dataset = torch.load(validation_dataset_path)
+        print('Resized Imagenet loaded from disk')
+
+    except FileNotFoundError:
+        validation_dataset = ImageNet(root=imagenet_folder,
+                                      split='val',
+                                      transform=transform_validation)
+
+        if image_per_class is not None:
+            selected_validation_list = []
+            image_class_counter = [0] * 1000
+            for validation_image in tqdm(validation_dataset, desc='Resizing Imagenet Dataset', colour='Yellow'):
+                if image_class_counter[validation_image[1]] < image_per_class:
+                    selected_validation_list.append(validation_image)
+                    image_class_counter[validation_image[1]] += 1
+            validation_dataset = selected_validation_list
+
+        os.makedirs(validation_dataset_folder, exist_ok=True)
+        torch.save(validation_dataset, validation_dataset_path)
+
+    # DataLoader is used to load the dataset
+    # for training
+    val_loader = torch.utils.data.DataLoader(dataset=validation_dataset,
+                                             batch_size=batch_size,
+                                             shuffle=False)
+    print('Dataset loaded')
+
+    return val_loader
 
 
 def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1, test_image_per_class=None):

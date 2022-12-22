@@ -5,17 +5,20 @@ import csv
 import itertools
 
 import torch
+from torch.nn import Sequential
+from torchvision.models.densenet import _DenseBlock, _Transition
+from torchvision.models.efficientnet import MBConv, Conv2dNormActivation
 
 from OutputFeatureMapsManager import OutputFeatureMapsManager
 from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
+from models.resnet import BasicBlock
 
-from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
-from models.utils import load_from_dict, load_CIFAR10_datasets
+from models.utils import load_ImageNet_validation_set, load_CIFAR10_datasets
 
 from models.SmartLayers.SmartLayersManager import SmartLayersManager
 
-from utils import get_device, parse_args, UnknownNetworkException
+from utils import load_network, get_device, parse_args, UnknownNetworkException
 
 
 def main(args):
@@ -28,41 +31,36 @@ def main(args):
                         use_cuda=args.use_cuda)
     print(f'Using device {device}')
 
-    if args.network_name == 'ResNet20':
-        network_function = resnet20
-    elif args.network_name == 'ResNet32':
-        network_function = resnet32
-    elif args.network_name == 'ResNet44':
-        network_function = resnet44
-    elif args.network_name == 'ResNet56':
-        network_function = resnet56
-    elif args.network_name == 'ResNet110':
-        network_function = resnet110
-    elif args.network_name == 'ResNet1202':
-        network_function = resnet1202
+    # Load the network
+    network = load_network(network_name=args.network_name,
+                           device=device)
+
+    # Load the dataset
+    if 'ResNet' in args.network_name:
+        _, _, loader = load_CIFAR10_datasets(test_batch_size=args.batch_size)
     else:
-        network_function = None
-        print(f'ERROR: Invalid network name {args.network_name}')
-        exit(-1)
-
-    network_path = f'models/pretrained_models/{args.network_name}.th'
-
-    _, _, test_loader = load_CIFAR10_datasets(test_batch_size=args.batch_size)
-
-    network = network_function()
-    network.to(device)
-    load_from_dict(network=network,
-                   device=device,
-                   path=network_path)
-    network.eval()
+        loader = load_ImageNet_validation_set(batch_size=args.batch_size,
+                                              image_per_class=1)
 
     # Folder containing the feature maps
     fm_folder = f'output/feature_maps/{args.network_name}/batch_{args.batch_size}'
+    os.makedirs(fm_folder, exist_ok=True)
     # Folder containing the clean output
     clean_output_folder = f'output/clean_output/{args.network_name}/batch_{args.batch_size}'
 
+    # Se the module class for the smart operations
+    if 'ResNet' in args.network_name:
+        module_classes = BasicBlock
+    elif 'DenseNet' in args.network_name:
+        module_classes = (_DenseBlock, _Transition)
+    elif 'EfficientNet' in args.network_name:
+        module_classes = (Conv2dNormActivation, Conv2dNormActivation)
+    else:
+        raise UnknownNetworkException(f'Unknown network {args.network_name}')
+
     ofm_manager = OutputFeatureMapsManager(network=network,
-                                           loader=test_loader,
+                                           loader=loader,
+                                           module_classes=module_classes,
                                            device=device,
                                            fm_folder=fm_folder,
                                            clean_output_folder=clean_output_folder)
@@ -76,6 +74,11 @@ def main(args):
         # Delete folder if already exists
         shutil.rmtree(fm_folder, ignore_errors=True)
 
+        # Create the fm dir if it doesn't exist
+        os.makedirs(fm_folder, exist_ok=True)
+        # Create the clean output dir if it doesn't exist
+        os.makedirs(clean_output_folder, exist_ok=True)
+
         # Save the intermediate layer
         ofm_manager.save_intermediate_layer_outputs()
     else:
@@ -85,13 +88,25 @@ def main(args):
     # Generate fault list
     fault_manager = FaultListGenerator(network=network,
                                        network_name=args.network_name,
-                                       injectable_layer_names=ofm_manager.feature_maps_layer_names,
                                        device=device)
 
-    fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
-                                                     save_fault_list=True)
+    clean_fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
+                                                           save_fault_list=True)
 
     for fault_dropping, fault_delayed_start in reversed(list(itertools.product([True, False], repeat=2))):
+
+        # ----- DEBUG ----- #
+        # if fault_dropping:
+        # if not fault_delayed_start:
+        # if not fault_dropping:
+        # if not fault_delayed_start:`
+        if not (fault_delayed_start and fault_dropping):
+            if not(not fault_delayed_start and not fault_dropping):
+                continue
+        # ----- DEBUG ----- #
+
+        # Create a copy of the fault list, to avoid that consecutive executions create bugs
+        fault_list = copy.deepcopy(clean_fault_list)
 
         if not args.forbid_cuda and args.use_cuda:
             print('Clearing cache')
@@ -108,6 +123,8 @@ def main(args):
                 delayed_start_module = smart_network
             elif 'DenseNet' in args.network_name:
                 delayed_start_module = smart_network.features
+            elif 'EfficientNet' in args.network_name:
+                delayed_start_module = smart_network.features
             else:
                 raise UnknownNetworkException
         else:
@@ -117,33 +134,37 @@ def main(args):
         if fault_dropping or fault_delayed_start:
 
             smart_layers_manager = SmartLayersManager(network=smart_network,
-                                                      module=delayed_start_module)
+                                                      delayed_start_module=delayed_start_module)
 
-            # Replace the convolutional layers of the network
-            smart_convolutions = smart_layers_manager.replace_conv_layers(device=device,
-                                                                          fm_folder=fm_folder,
-                                                                          threshold=args.threshold)
+            # Replace the smart layers of the network
+            smart_modules_list = smart_layers_manager.replace_smart_modules(module_classes=module_classes,
+                                                                            device=device,
+                                                                            fm_folder=fm_folder,
+                                                                            threshold=args.threshold,
+                                                                            fault_list=fault_list)
 
             if fault_delayed_start:
                 # Replace the forward module of the target module to enable delayed start
                 smart_layers_manager.replace_module_forward()
+
+            smart_network.eval()
         else:
-            smart_convolutions = None
+            smart_modules_list = None
 
 
         # Execute the fault injection campaign with the smart network
         fault_injection_executor = FaultInjectionManager(network=smart_network,
-                                                         network_name=f'Smart{args.network_name}',
+                                                         network_name=args.network_name,
                                                          device=device,
-                                                         smart_convolutions=smart_convolutions,
-                                                         loader=test_loader,
+                                                         smart_modules_list=smart_modules_list,
+                                                         loader=loader,
                                                          clean_output=ofm_manager.clean_output)
 
-        elapsed_time = fault_injection_executor.run_faulty_campaign_on_weight(fault_list=copy.deepcopy(fault_list),
-                                                                              fault_dropping=fault_dropping,
-                                                                              fault_delayed_start=fault_delayed_start,
-                                                                              delayed_start_module=delayed_start_module,
-                                                                              first_batch_only=True)
+        elapsed_time, avg_memory_occupation = fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
+                                                                                                     fault_dropping=fault_dropping,
+                                                                                                     fault_delayed_start=fault_delayed_start,
+                                                                                                     delayed_start_module=delayed_start_module,
+                                                                                                     first_batch_only=True)
 
         if not args.no_log_results:
             os.makedirs('log', exist_ok=True)
@@ -153,10 +174,10 @@ def main(args):
 
                 # For the first row write the header first
                 if os.stat(log_path).st_size == 0:
-                    writer.writerow(['Batch Size', 'Fault Dropping', 'Fault Delayed Start', 'Time'])
+                    writer.writerow(['Batch Size', 'Fault Dropping', 'Fault Delayed Start', 'Time', 'Avg. Memory Occupation'])
 
                 # Log the results of the fault injection campaign
-                writer.writerow([args.batch_size, fault_dropping, fault_delayed_start, elapsed_time])
+                writer.writerow([args.batch_size, fault_dropping, fault_delayed_start, elapsed_time, avg_memory_occupation])
 
 
 if __name__ == '__main__':

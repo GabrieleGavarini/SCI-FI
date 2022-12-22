@@ -2,43 +2,69 @@ import copy
 from functools import reduce
 import types
 
-from typing import List
+from typing import List, Tuple, Type
 
 import torchinfo
 import torch
 from torch.nn import Module
 
-from models.SmartLayers.SmartConv2d import SmartConv2d
+from FaultGenerators.WeightFault import WeightFault
+from models.SmartLayers.SmartModule import SmartModule
 
 
 class SmartLayersManager:
 
     def __init__(self,
                  network: Module,
-                 module: Module = None):
+                 delayed_start_module: Module = None):
 
         self.network = network
-        self.module = module
+        self.delayed_start_module = delayed_start_module
 
     @staticmethod
-    def __smart_forward(self, x):
+    def __smart_forward(self,
+                        input_tensor: torch.Tensor) -> torch.Tensor:
         """
         Smart forward used for fault delayed start. With this smart function, the inference starts from the first layer
         marked as starting layer and the input of that layer is loaded from disk
-        :param self:
-        :param x:
-        :return:
+        :param input_tensor: The module input tensor
+        :return: The module output tensor
         """
 
-        # Execute the layers iteratively, starting from the one where the fault is injected
-        layer_index = self.layers.index(self.starting_layer)
-        # Load the input of the layer
-        # TODO: manage this: what happens if the convolutional layer is not the first layer of the network?
-        x = self.starting_convolutional_layer.get_golden_ifm()
-        for layer in self.layers[layer_index:]:
-            x = layer(x)
+        # If the starting layer and starting module are set, proceed with the smart forward
+        if self.starting_layer is not None and self.starting_module is not None:
+
+            # Execute the layers iteratively, starting from the one where the fault is injected
+            layer_index = self.layers.index(self.starting_layer)
+
+            # Create a dummy input
+            # TODO: self.starting_layer.input_size
+            x = torch.zeros(size=self.starting_module.input_size, device='cuda')
+
+            # Specify that the first module inside this layer should load the input from memory and not read from previous
+            # layer
+            self.starting_module.start_from_this_layer()
+
+            # Iteratively execute modules in the layer
+            for layer in self.layers[layer_index:]:
+                x = layer(x)
+
+            # Clear the marking on the first module
+            self.starting_module.do_not_start_from_this_layer()
+
+        # Otherwise, used the original forward function of the network
+        else:
+            x = self.original_forward(input_tensor)
 
         return x
+
+
+    @staticmethod
+    def __generate_layers(self) -> None:
+        """
+        Generate a list of all the children modules contained in this module
+        """
+        self.layers = [children for name, children in self.named_children()]
 
 
     def replace_module_forward(self) -> None:
@@ -47,29 +73,45 @@ class SmartLayersManager:
         """
 
         # Add the starting layer attribute
-        self.module.starting_layer = None
-        self.module.starting_convolutional_layer = None
+        self.delayed_start_module.starting_layer = None
+        self.delayed_start_module.starting_module = None
+
+        # Save the original forward function
+        self.delayed_start_module.original_forward = copy.deepcopy(self.delayed_start_module.forward)
 
         # Replace with the smart module function
-        self.module.forward = types.MethodType(SmartLayersManager.__smart_forward, self.module)
+        self.delayed_start_module.forward = types.MethodType(SmartLayersManager.__smart_forward, self.delayed_start_module)
+
+        # If not present, add the costume generate_layer_function, otherwise resort to the module implementation of this
+        # function
+        if not callable(getattr(self.delayed_start_module, "generate_layer_list", None)):
+            self.delayed_start_module.generate_layer_list = types.MethodType(SmartLayersManager.__generate_layers, self.delayed_start_module)
+
+        # Generate the layer list
+        self.delayed_start_module.generate_layer_list()
 
 
-    def replace_conv_layers(self,
-                            device: torch.device,
-                            fm_folder: str,
-                            threshold: float = 0,
-                            input_size: torch.Size = torch.Size((1, 3, 32, 32))) -> List[SmartConv2d]:
+    def replace_smart_modules(self,
+                              module_classes: Tuple[Type[Module]] or Type[Module],
+                              device: torch.device,
+                              fm_folder: str,
+                              threshold: float = 0,
+                              input_size: torch.Size = torch.Size((1, 3, 32, 32)),
+                              fault_list: List[WeightFault] = None) -> List[SmartModule]:
         """
         Replace all the convolutional layers of the network with injectable convolutional layers
+        :param module_classes: The type (or tuple of types) of module to replace
         :param device: The device where the network is loaded
         :param fm_folder: The folder containing the input and output feature maps
         :param threshold: The threshold under which a folder has no impact
         :param input_size: torch.Size((32, 32, 3)). The torch.Size of an input image
+        :param fault_list: Default None. If specified, update the name of the layer in the fault list to reflect the
+        substitution of layers
         :return A list of all the new InjectableConv2d
         """
 
         # Find a list of all the convolutional layers
-        convolutional_layers = [(name, copy.deepcopy(module)) for name, module in self.network.named_modules() if isinstance(module, torch.nn.Conv2d)]
+        modules_to_replace = [(name, copy.deepcopy(module)) for name, module in self.network.named_modules() if isinstance(module, module_classes)]
 
 
         # Create a summary of the network
@@ -79,15 +121,15 @@ class SmartLayersManager:
                                     verbose=False)
 
         # Extract the output, input and kernel shape of all the convolutional layers of the network
-        output_sizes = [torch.Size(info.output_size) for info in summary.summary_list if isinstance(info.module, torch.nn.Conv2d)]
-        input_sizes = [torch.Size(info.input_size) for info in summary.summary_list if isinstance(info.module, torch.nn.Conv2d)]
-        kernel_sizes = [torch.Size(info.kernel_size) for info in summary.summary_list if isinstance(info.module, torch.nn.Conv2d)]
+        output_sizes = [torch.Size(info.output_size) for info in summary.summary_list if isinstance(info.module, module_classes)]
+        input_sizes = [torch.Size(info.input_size) for info in summary.summary_list if isinstance(info.module, module_classes)]
+        kernel_sizes = None  # [torch.Size(info.kernel_size) for info in summary.summary_list if (isinstance(info.module, module_class) and hasattr(info, 'kernel_size'))]
 
         # Initialize the list of all the injectable layers
-        injectable_layers = list()
+        smart_modules_list = list()
 
         # Replace all convolution layers with injectable convolutional layers
-        for layer_id, (layer_name, layer_module) in enumerate(convolutional_layers):
+        for layer_id, (layer_name, layer_module) in enumerate(modules_to_replace):
             # To fine the actual layer with nested layers (e.g. inside a convolutional layer inside a Basic Block in a
             # ResNet, first separate the layer names using the '.'
             formatted_names = layer_name.split(sep='.')
@@ -103,23 +145,30 @@ class SmartLayersManager:
 
 
             # Create the injectable version of the convolutional layer
-            faulty_convolutional_layer = SmartConv2d(conv_layer=layer_module,
-                                                     device=device,
-                                                     layer_name=layer_name,
-                                                     input_size=input_sizes[layer_id],
-                                                     output_size=output_sizes[layer_id],
-                                                     kernel_size=kernel_sizes[layer_id],
-                                                     fm_folder=fm_folder,
-                                                     threshold=threshold)
+            smart_module = SmartModule(module=layer_module,
+                                       device=device,
+                                       layer_name=layer_name,
+                                       input_size=input_sizes[layer_id],
+                                       output_size=output_sizes[layer_id],
+                                       kernel_size=kernel_sizes[layer_id] if kernel_sizes is not None else None,
+                                       fm_folder=fm_folder,
+                                       threshold=threshold)
 
             # Append the layer to the list
-            injectable_layers.append(faulty_convolutional_layer)
+            smart_modules_list.append(smart_module)
 
             # Change the convolutional layer to its injectable counterpart
-            setattr(container_layer, formatted_names[-1], faulty_convolutional_layer)
+            setattr(container_layer, formatted_names[-1], smart_module)
+
+            # Update the fault list with the new name
+            if fault_list is not None:
+                smart_module_name = [name for name, module in self.network.named_modules() if module is smart_module][0]
+                for fault in fault_list:
+                    if '._SmartModule__module' not in fault.layer_name:
+                        fault.layer_name = fault.layer_name.replace(smart_module_name, f'{smart_module_name}._SmartModule__module')
 
         # If the network has a layer list, regenerate to update the layers in the list
-        if self.module is not None and callable(getattr(self.module, "generate_layer_list", None)):
-            self.module.generate_layer_list()
+        if self.delayed_start_module is not None and callable(getattr(self.delayed_start_module, "generate_layer_list", None)):
+            self.delayed_start_module.generate_layer_list()
 
-        return injectable_layers
+        return smart_modules_list
