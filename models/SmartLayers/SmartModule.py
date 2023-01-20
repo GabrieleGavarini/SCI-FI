@@ -14,7 +14,6 @@ class SmartModule(Module):
                  device: torch.device,
                  input_size: torch.Size,
                  output_size: torch.Size,
-                 kernel_size: torch.Size,
                  layer_name: str,
                  fm_folder: str,
                  threshold: float = 0) -> None:
@@ -30,7 +29,6 @@ class SmartModule(Module):
         # Size of input, output and kernel tensors
         self.output_size = output_size
         self.input_size = input_size
-        self.kernel_size = kernel_size
 
         # The id of the batch currently used for inference
         self.__batch_id = None

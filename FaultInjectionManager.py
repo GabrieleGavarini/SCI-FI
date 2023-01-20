@@ -2,7 +2,6 @@ import shutil
 import time
 import math
 from datetime import timedelta
-import re
 
 import torch
 from torch.nn import Module
@@ -10,11 +9,13 @@ from torch.utils.data import DataLoader
 
 from tqdm import tqdm
 
+from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.WeightFaultInjector import WeightFaultInjector
+from FaultGenerators.modules.InjectableOutputModule import InjectableOutputModule
 from models.SmartLayers.utils import NoChangeOFMException
 from utils import formatted_print
 
-from typing import List
+from typing import List, Union
 
 from models.SmartLayers.SmartModule import SmartModule
 
@@ -27,7 +28,8 @@ class FaultInjectionManager:
                  smart_modules_list: List[SmartModule],
                  device: torch.device,
                  loader: DataLoader,
-                 clean_output: torch.Tensor):
+                 clean_output: torch.Tensor,
+                 injectable_modules: List[Union[InjectableOutputModule, List[InjectableOutputModule]]] = None):
 
         self.network = network
         self.network_name = network_name
@@ -50,8 +52,12 @@ class FaultInjectionManager:
         # The weight fault injector
         self.weight_fault_injector = WeightFaultInjector(self.network)
 
+        # The list of injectable module, used only for neuron fault injection
+        self.injectable_modules = injectable_modules
+
 
     def run_faulty_campaign_on_weight(self,
+                                      fault_model: str,
                                       fault_list: list,
                                       fault_dropping: bool = True,
                                       fault_delayed_start: bool = True,
@@ -60,6 +66,7 @@ class FaultInjectionManager:
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
         layer, loading the input feature maps of the previous layer
+        :param fault_model: The faut model for the injection
         :param fault_list: list of fault to inject
         :param fault_dropping: Default True. Whether to drop fault or not
         :param fault_delayed_start: Default True. Whether to start the execution from the layer where the faults are
@@ -151,8 +158,8 @@ class FaultInjectionManager:
                             # TODO: add the fact that fault.layer_name start with 'delayed_start_module.name + name'
                             starting_layer = [(name, children) for name, children in delayed_start_module.named_children()
                                               # if fault.layer_name.split('_SmartModule__module.')[-1].startswith(name)][0]
-                                              # if fault.layer_name.startswith(name)][0]
-                                              if name in fault.layer_name][0]
+                                              if fault.layer_name.startswith(name)][0]
+                                              # if name in fault.layer_name][0]
 
                             delayed_start_module.starting_layer = starting_layer[1]
 
@@ -168,8 +175,13 @@ class FaultInjectionManager:
                             delayed_start_module.starting_layer = None
                             delayed_start_module.starting_module = None
 
-                    # Inject faults in the weight
-                    self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
+                    # Inject faults
+                    if fault_model == 'byzantine_neuron':
+                        injected_layer = self.__inject_fault_on_neuron(fault=fault)
+                    elif fault_model == 'stuckat_params':
+                        self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
+                    else:
+                        raise ValueError(f'Invalid fault model {fault_model}')
 
                     # Reset memory occupation stats
                     torch.cuda.reset_peak_memory_stats()
@@ -198,20 +210,26 @@ class FaultInjectionManager:
                                       'Avg. memory': f'{average_memory_occupation} MB'}
                                      )
 
-                    # Restore the golden value
-                    self.weight_fault_injector.restore_golden()
+
+                    # Clean the fault
+                    if fault_model == 'byzantine_neuron':
+                        injected_layer.clean_fault()
+                    elif fault_model == 'stuckat_params':
+                        self.weight_fault_injector.restore_golden()
+                    else:
+                        raise ValueError(f'Invalid fault model {fault_model}')
 
                     # Increment the iteration count
                     total_iterations += 1
 
-                # Print results to file
-                formatted_print(fault_list=fault_list,
-                                batch_size=self.loader.batch_size,
-                                batch_id=batch_id,
-                                network_name=self.network_name,
-                                faulty_prediction_dict=faulty_prediction_dict,
-                                fault_dropping=fault_dropping,
-                                fault_delayed_start=fault_delayed_start)
+                # # Print results to file
+                # formatted_print(fault_list=fault_list,
+                #                 batch_size=self.loader.batch_size,
+                #                 batch_id=batch_id,
+                #                 network_name=self.network_name,
+                #                 faulty_prediction_dict=faulty_prediction_dict,
+                #                 fault_dropping=fault_dropping,
+                #                 fault_delayed_start=fault_delayed_start)
 
                 # End after only one batch if the option is specified
                 if first_batch_only:
@@ -256,7 +274,7 @@ class FaultInjectionManager:
 
     def __inject_fault_on_weight(self,
                                  fault,
-                                 fault_mode='stuck-at'):
+                                 fault_mode='stuck-at') -> None:
         """
         Inject a fault in one of the weight of the network
         :param fault: The fault to inject
@@ -276,3 +294,35 @@ class FaultInjectionManager:
         else:
             print('FaultInjectionManager: Invalid fault mode')
             quit()
+
+
+    def __inject_fault_on_neuron(self,
+                                 fault: NeuronFault) -> InjectableOutputModule:
+        """
+        Inject a fault in the neuron
+        :param fault: The fault to inject
+        :return: The injected layer
+        """
+        output_fault_mask = torch.zeros(size=self.injectable_modules[fault.layer_index].output_size)
+
+        layer = fault.layer_index
+        channel = fault.feature_map_index[0]
+        height = fault.feature_map_index[1]
+        width = fault.feature_map_index[2]
+        value = fault.value
+
+        # Set values to one for the injected elements
+        output_fault_mask[0, channel, height, width] = 1
+
+        # Cast mask to int and move to device
+        output_fault_mask = output_fault_mask.int().to(self.device)
+
+        # Create a random output
+        output_fault = torch.ones(size=self.injectable_modules[layer].output_size, device=self.device).mul(value)
+
+        # Inject the fault
+        self.injectable_modules[layer].inject_fault(output_fault=output_fault,
+                                                    output_fault_mask=output_fault_mask)
+
+        # Return the injected layer
+        return self.injectable_modules[layer]

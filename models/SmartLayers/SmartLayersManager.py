@@ -123,7 +123,6 @@ class SmartLayersManager:
         # Extract the output, input and kernel shape of all the convolutional layers of the network
         output_sizes = [torch.Size(info.output_size) for info in summary.summary_list if isinstance(info.module, module_classes)]
         input_sizes = [torch.Size(info.input_size) for info in summary.summary_list if isinstance(info.module, module_classes)]
-        kernel_sizes = None  # [torch.Size(info.kernel_size) for info in summary.summary_list if (isinstance(info.module, module_class) and hasattr(info, 'kernel_size'))]
 
         # Initialize the list of all the injectable layers
         smart_modules_list = list()
@@ -150,7 +149,6 @@ class SmartLayersManager:
                                        layer_name=layer_name,
                                        input_size=input_sizes[layer_id],
                                        output_size=output_sizes[layer_id],
-                                       kernel_size=kernel_sizes[layer_id] if kernel_sizes is not None else None,
                                        fm_folder=fm_folder,
                                        threshold=threshold)
 

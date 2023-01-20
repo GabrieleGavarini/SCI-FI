@@ -42,9 +42,39 @@ def main(args):
         loader = load_ImageNet_validation_set(batch_size=args.batch_size,
                                               image_per_class=1)
 
+    # ----------- DEBUG ------------ #
+    # import time
+    # from tqdm import tqdm
+    # with torch.no_grad():
+    #
+    #     multiple_inferences_per_batch = 1
+    #     # Start measuring the time elapsed
+    #     start_time = time.time()
+    #
+    #     # Cycle all the batches in the data loader
+    #     for batch_id, batch in enumerate(tqdm(loader)):
+    #         for _ in range(multiple_inferences_per_batch):
+    #             data, _ = batch
+    #             data = data.to(device)
+    #
+    #             network(data)
+    #
+    #             network_output = network(data)
+    #             faulty_prediction = torch.topk(network_output, k=1)
+    #             clean_prediction = torch.topk(network_output, k=1)
+    #
+    # elapsed = time.time() - start_time
+    #
+    # print(elapsed/(multiple_inferences_per_batch * len(loader)))
+    # exit()
+    #
+
+    # ----------- DEBUG ------------ #
+
     # Folder containing the feature maps
     fm_folder = f'output/feature_maps/{args.network_name}/batch_{args.batch_size}'
     os.makedirs(fm_folder, exist_ok=True)
+
     # Folder containing the clean output
     clean_output_folder = f'output/clean_output/{args.network_name}/batch_{args.batch_size}'
 
@@ -88,10 +118,9 @@ def main(args):
     # Generate fault list
     fault_manager = FaultListGenerator(network=network,
                                        network_name=args.network_name,
-                                       device=device)
-
-    clean_fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
-                                                           save_fault_list=True)
+                                       device=device,
+                                       module_classes=torch.nn.Conv2d,
+                                       input_size=loader.dataset[0][0].unsqueeze(0).shape)
 
     for fault_dropping, fault_delayed_start in reversed(list(itertools.product([True, False], repeat=2))):
 
@@ -100,10 +129,26 @@ def main(args):
         # if not fault_delayed_start:
         # if not fault_dropping:
         # if not fault_delayed_start:`
-        if not (fault_delayed_start and fault_dropping):
-            if not(not fault_delayed_start and not fault_dropping):
-                continue
+        # if not (fault_delayed_start and fault_dropping):
+        #     if not(not fault_delayed_start and not fault_dropping):
+        #         continue
         # ----- DEBUG ----- #
+
+        # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
+        smart_network = copy.deepcopy(network)
+        fault_manager.update_network(smart_network)
+
+        # Manage the fault models
+        if args.fault_model == 'byzantine_neuron':
+            clean_fault_list = fault_manager.get_neuron_fault_list(load_fault_list=True,
+                                                                   save_fault_list=True)
+            injectable_modules = fault_manager.injectable_output_modules_list
+        elif args.fault_model == 'stuckat_params':
+            clean_fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
+                                                                   save_fault_list=True)
+            injectable_modules = None
+        else:
+            raise ValueError(f'Invalid fault model {args.fault_model}')
 
         # Create a copy of the fault list, to avoid that consecutive executions create bugs
         fault_list = copy.deepcopy(clean_fault_list)
@@ -111,9 +156,6 @@ def main(args):
         if not args.forbid_cuda and args.use_cuda:
             print('Clearing cache')
             torch.cuda.empty_cache()
-
-        # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
-        smart_network = copy.deepcopy(network)
 
         # If fault delayed start is enabled, set the module where this function is enabled, otherwise set the module
         # to None
@@ -143,6 +185,12 @@ def main(args):
                                                                             threshold=args.threshold,
                                                                             fault_list=fault_list)
 
+            # Update the network. Useful to update the list of injectable layers when injecting in the neurons
+            if injectable_modules is not None:
+                fault_manager.update_network(smart_network)
+                injectable_modules = fault_manager.injectable_output_modules_list
+
+
             if fault_delayed_start:
                 # Replace the forward module of the target module to enable delayed start
                 smart_layers_manager.replace_module_forward()
@@ -158,9 +206,11 @@ def main(args):
                                                          device=device,
                                                          smart_modules_list=smart_modules_list,
                                                          loader=loader,
-                                                         clean_output=ofm_manager.clean_output)
+                                                         clean_output=ofm_manager.clean_output,
+                                                         injectable_modules=injectable_modules)
 
-        elapsed_time, avg_memory_occupation = fault_injection_executor.run_faulty_campaign_on_weight(fault_list=fault_list,
+        elapsed_time, avg_memory_occupation = fault_injection_executor.run_faulty_campaign_on_weight(fault_model=args.fault_model,
+                                                                                                     fault_list=fault_list,
                                                                                                      fault_dropping=fault_dropping,
                                                                                                      fault_delayed_start=fault_delayed_start,
                                                                                                      delayed_start_module=delayed_start_module,
@@ -174,10 +224,10 @@ def main(args):
 
                 # For the first row write the header first
                 if os.stat(log_path).st_size == 0:
-                    writer.writerow(['Batch Size', 'Fault Dropping', 'Fault Delayed Start', 'Time', 'Avg. Memory Occupation'])
+                    writer.writerow(['Fault Model', 'Batch Size', 'Fault Dropping', 'Fault Delayed Start', 'Time', 'Avg. Memory Occupation'])
 
                 # Log the results of the fault injection campaign
-                writer.writerow([args.batch_size, fault_dropping, fault_delayed_start, elapsed_time, avg_memory_occupation])
+                writer.writerow([args.fault_model, args.batch_size, fault_dropping, fault_delayed_start, elapsed_time, avg_memory_occupation])
 
 
 if __name__ == '__main__':
