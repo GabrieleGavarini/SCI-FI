@@ -13,7 +13,6 @@ from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.WeightFaultInjector import WeightFaultInjector
 from FaultGenerators.modules.InjectableOutputModule import InjectableOutputModule
 from models.SmartLayers.utils import NoChangeOFMException
-from utils import formatted_print
 
 from typing import List, Union
 
@@ -91,11 +90,11 @@ class FaultInjectionManager:
         with torch.no_grad():
 
             # Order the fault list to speed up the injection
+            # This is also important to avoid differences between a
             fault_list = sorted(fault_list, key=lambda x: x.layer_name)
 
             # Start measuring the time elapsed
             start_time = time.time()
-
 
             # Cycle all the batches in the data loader
             for batch_id, batch in enumerate(self.loader):
@@ -118,11 +117,6 @@ class FaultInjectionManager:
                             ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
 
-                    # ---- DEBUG ---- #
-                    if not fault.layer_name.startswith('layer'):
-                        continue
-                    # ---- DEBUG ---- #
-
                     # Change the description of the progress bar
                     if fault_dropping and fault_delayed_start:
                         pbar.set_description(f'FI (w/ drop & delayed) on b {batch_id}')
@@ -138,28 +132,28 @@ class FaultInjectionManager:
                         smart_modules_names = [module.layer_name for module in self.__smart_modules_list]
                         try:
                             fault_layer_index = [fault.layer_name.startswith(smart_module_name) for smart_module_name in smart_modules_names].index(True)
+
+                            # Name of the layers to compare
+                            if fault_layer_index < len(smart_modules_names) - 1:
+                                smart_modules_to_check = smart_modules_names[fault_layer_index + 1: fault_layer_index + 2]
+                            else:
+                                smart_modules_to_check = None
+
+                            # # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
+                            for smart_module in self.__smart_modules_list:
+
+                                # If the layer needs to be checked
+                                if smart_modules_to_check is not None and smart_module.layer_name in smart_modules_to_check:
+                                    # Add the comparison for the layer after the fault injection
+                                    smart_module.compare_with_golden()
+                                else:
+                                    # Remove the comparison with golden for all the layer previous to the computation of the
+                                    # faulty layer
+                                    smart_module.do_not_compare_with_golden()
+
                         except ValueError:
                             # These are layers that are injectable but not inside any of the smart module
-                            continue
-
-                        # Name of the layers to compare
-                        if fault_layer_index < len(smart_modules_names) - 1:
-                            smart_modules_to_check = smart_modules_names[fault_layer_index + 1: fault_layer_index + 2]
-                        else:
-                            smart_modules_to_check = None
-
-                        # # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
-                        for smart_module in self.__smart_modules_list:
-
-                            # If the layer needs to be checked
-                            # if len(smart_modules_to_check) > 0 and smart_module.layer_name in smart_modules_to_check:
-                            if smart_modules_to_check is not None and smart_module.layer_name in smart_modules_to_check:
-                                # Add the comparison for the layer after the fault injection
-                                smart_module.compare_with_golden()
-                            else:
-                                # Remove the comparison with golden for all the layer previous to the computation of the
-                                # faulty layer
-                                smart_module.do_not_compare_with_golden()
+                            pass
 
                     # ----------------------------- #
 

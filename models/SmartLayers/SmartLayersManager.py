@@ -11,6 +11,8 @@ from torch.nn import Module
 from FaultGenerators.WeightFault import WeightFault
 from models.SmartLayers.SmartModule import SmartModule
 
+from models.SmartLayers.utils import get_delayed_start_module_subclass
+
 
 class SmartLayersManager:
 
@@ -31,43 +33,6 @@ class SmartLayersManager:
                                          input_size=input_size,
                                          verbose=False)
 
-    @staticmethod
-    def __smart_forward(self,
-                        input_tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Smart forward used for fault delayed start. With this smart function, the inference starts from the first layer
-        marked as starting layer and the input of that layer is loaded from disk
-        :param input_tensor: The module input tensor
-        :return: The module output tensor
-        """
-
-        # If the starting layer and starting module are set, proceed with the smart forward
-        if self.starting_layer is not None and self.starting_module is not None:
-
-            # Execute the layers iteratively, starting from the one where the fault is injected
-            layer_index = self.layers.index(self.starting_layer)
-
-            # Create a dummy input
-            # TODO: self.starting_layer.input_size
-            x = torch.zeros(size=self.starting_module.input_size, device='cuda')
-
-            # Specify that the first module inside this layer should load the input from memory and not read from previous
-            # layer
-            self.starting_module.start_from_this_layer()
-
-            # Iteratively execute modules in the layer
-            for layer in self.layers[layer_index:]:
-                x = layer(x)
-
-            # Clear the marking on the first module
-            self.starting_module.do_not_start_from_this_layer()
-
-        # Otherwise, used the original forward function of the network
-        else:
-            x = self.original_forward(input_tensor)
-
-        return x
-
 
     @staticmethod
     def __generate_layers(self) -> None:
@@ -86,11 +51,8 @@ class SmartLayersManager:
         self.delayed_start_module.starting_layer = None
         self.delayed_start_module.starting_module = None
 
-        # Save the original forward function
-        self.delayed_start_module.original_forward = copy.deepcopy(self.delayed_start_module.forward)
-
-        # Replace with the smart module function
-        self.delayed_start_module.forward = types.MethodType(SmartLayersManager.__smart_forward, self.delayed_start_module)
+        # Inherit the delayed start module to a child module that overloads the forward function
+        self.delayed_start_module.__class__ = get_delayed_start_module_subclass(superclass_type=type(self.delayed_start_module))
 
         # If not present, add the costume generate_layer_function, otherwise resort to the module implementation of this
         # function
