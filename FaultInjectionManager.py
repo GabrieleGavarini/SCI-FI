@@ -38,12 +38,8 @@ class FaultInjectionManager:
 
         self.clean_output = clean_output
 
-        # The network truncated from a starting layer
-        self.faulty_network = None
-
         # The smart modules in the network
         self.__smart_modules_list = smart_modules_list
-
 
         # The number of total inferences and the number of skipped inferences
         self.skipped_inferences = 0
@@ -62,12 +58,13 @@ class FaultInjectionManager:
                                       fault_dropping: bool = True,
                                       fault_delayed_start: bool = True,
                                       delayed_start_module: Module = None,
-                                      first_batch_only: bool = False) -> (str, int):
+                                      first_batch_only: bool = False,
+                                      save_feature_maps_statistics: bool = False) -> (str, int):
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
         layer, loading the input feature maps of the previous layer
         :param fault_model: The faut model for the injection
-        :param fault_list: list of fault to inject
+        :param fault_list: list of fault to inject. One of ['byzantine_neuron', 'stuckat_params']
         :param fault_dropping: Default True. Whether to drop fault or not
         :param fault_delayed_start: Default True. Whether to start the execution from the layer where the faults are
         injected or not
@@ -76,6 +73,8 @@ class FaultInjectionManager:
         the network
         :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
         batch only
+        :param save_feature_maps_statistics: Default False. Whether to save statistics about the feature maps after the
+        fault injection
         :return: A tuple formed by : (i) a string containing the formatted time elapsed from the beginning to the end of
         the fault injection campaign, (ii) an integer measuring the average memory occupied (in MB)
         """
@@ -90,6 +89,9 @@ class FaultInjectionManager:
         total_iterations = 1
 
         with torch.no_grad():
+
+            # Order the fault list to speed up the injection
+            fault_list = sorted(fault_list, key=lambda x: x.layer_name)
 
             # Start measuring the time elapsed
             start_time = time.time()
@@ -113,8 +115,13 @@ class FaultInjectionManager:
                 pbar = tqdm(fault_list,
                             colour='green',
                             desc=f'FI on b {batch_id}',
-                            ncols=shutil.get_terminal_size().columns)
+                            ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
+
+                    # ---- DEBUG ---- #
+                    if not fault.layer_name.startswith('layer'):
+                        continue
+                    # ---- DEBUG ---- #
 
                     # Change the description of the progress bar
                     if fault_dropping and fault_delayed_start:
@@ -124,6 +131,8 @@ class FaultInjectionManager:
                     elif fault_delayed_start:
                         pbar.set_description(f'FI (w/ delayed) on b {batch_id}')
 
+                    # ------ FAULT  DROPPING ------ #
+
                     if fault_dropping:
                         # List of all the layer for which it is possible to compare the ofm
                         smart_modules_names = [module.layer_name for module in self.__smart_modules_list]
@@ -132,19 +141,29 @@ class FaultInjectionManager:
                         except ValueError:
                             # These are layers that are injectable but not inside any of the smart module
                             continue
-                        # fault_layer_index = smart_modules_names.index(fault.layer_name.replace('._SmartModule__module', ''))
 
-                        # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
+                        # Name of the layers to compare
+                        if fault_layer_index < len(smart_modules_names) - 1:
+                            smart_modules_to_check = smart_modules_names[fault_layer_index + 1: fault_layer_index + 2]
+                        else:
+                            smart_modules_to_check = None
+
+                        # # Set which ofm to check during the forward pass. Only check the ofm that come after the fault
                         for smart_module in self.__smart_modules_list:
 
-                            # Add the comparison for the layer after the fault injection
-                            if fault_layer_index < len(smart_modules_names) - 1 and smart_module.layer_name == smart_modules_names[fault_layer_index + 1]:
+                            # If the layer needs to be checked
+                            # if len(smart_modules_to_check) > 0 and smart_module.layer_name in smart_modules_to_check:
+                            if smart_modules_to_check is not None and smart_module.layer_name in smart_modules_to_check:
+                                # Add the comparison for the layer after the fault injection
                                 smart_module.compare_with_golden()
-
-                            # Remove the comparison with golden for all the layer previous to the computation of the faulty
-                            # layer
                             else:
+                                # Remove the comparison with golden for all the layer previous to the computation of the
+                                # faulty layer
                                 smart_module.do_not_compare_with_golden()
+
+                    # ----------------------------- #
+
+                    # ---- FAULT DELAYED START ---- #
 
                     if fault_delayed_start:
                         # Do this only if the fault is injected inside one of the layer that allow delayed start
@@ -155,25 +174,28 @@ class FaultInjectionManager:
                                 delayed_start_module = self.network
 
                             # Get the name of the first-tier layer containing the module where the fault is injected
-                            # TODO: add the fact that fault.layer_name start with 'delayed_start_module.name + name'
                             starting_layer = [(name, children) for name, children in delayed_start_module.named_children()
-                                              # if fault.layer_name.split('_SmartModule__module.')[-1].startswith(name)][0]
-                                              if fault.layer_name.startswith(name)][0]
-                                              # if name in fault.layer_name][0]
+                                              if fault.layer_name.startswith(name)]
 
-                            delayed_start_module.starting_layer = starting_layer[1]
+                            assert len(starting_layer) == 1
+                            starting_layer = starting_layer[0][1]
+
+                            delayed_start_module.starting_layer = starting_layer
+
+                            starting_module = [module for module in self.__smart_modules_list
+                                               if module in [m for m in starting_layer.modules()]]
 
                             # Select the first smart module inside the faulty first-tier layer
-                            delayed_start_module.starting_module = [module for module in self.__smart_modules_list
-                                                                    if module in [m for m in delayed_start_module.starting_layer.modules()]][0]
-                                                                    # if starting_layer[0] in module.layer_name][0]
+                            delayed_start_module.starting_module = starting_module[0]
 
-                            assert delayed_start_module.starting_module in [m for m in delayed_start_module.starting_layer.modules()]
+                            assert delayed_start_module.starting_module in [m for m in delayed_start_module.starting_layer.children()]
                         else:
                             # If the fault is injected in a non-smart layer, then starting_layer and starting_module
                             # should be None
                             delayed_start_module.starting_layer = None
                             delayed_start_module.starting_module = None
+
+                    # ----------------------------- #
 
                     # Inject faults
                     if fault_model == 'byzantine_neuron':
@@ -205,11 +227,10 @@ class FaultInjectionManager:
                     # Measure the loss in accuracy
                     total_predictions += len(batch[0])
                     different_predictions_percentage = 100 * total_different_predictions / total_predictions
-                    pbar.set_postfix({'Different': f'{different_predictions_percentage:.4f}%',
+                    pbar.set_postfix({'Different': f'{different_predictions_percentage:.6f}%',
                                       'Skipped': f'{100*self.skipped_inferences/self.total_inferences:.2f}%',
                                       'Avg. memory': f'{average_memory_occupation} MB'}
                                      )
-
 
                     # Clean the fault
                     if fault_model == 'byzantine_neuron':
@@ -222,21 +243,12 @@ class FaultInjectionManager:
                     # Increment the iteration count
                     total_iterations += 1
 
-                # # Print results to file
-                # formatted_print(fault_list=fault_list,
-                #                 batch_size=self.loader.batch_size,
-                #                 batch_id=batch_id,
-                #                 network_name=self.network_name,
-                #                 faulty_prediction_dict=faulty_prediction_dict,
-                #                 fault_dropping=fault_dropping,
-                #                 fault_delayed_start=fault_delayed_start)
-
                 # End after only one batch if the option is specified
                 if first_batch_only:
                     break
 
                 # Remove all the loaded golden output feature map
-                if fault_dropping:
+                if fault_dropping or fault_delayed_start:
                     for smart_module in self.__smart_modules_list:
                         smart_module.unload_golden()
 

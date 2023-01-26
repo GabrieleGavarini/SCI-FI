@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from torch.nn import Module, Conv2d
 
-from models.SmartLayers.utils import check_difference
+from models.SmartLayers.utils import NoChangeOFMException
 
 
 class SmartModule(Module):
@@ -51,6 +51,25 @@ class SmartModule(Module):
         # The threshold under which a fault ha no impact
         self.__threshold = threshold
 
+    @staticmethod
+    def __check_difference(golden: torch.Tensor,
+                           faulty: torch.Tensor,
+                           threshold: float):
+        """
+        If faulty contains at least one nan, raise NoChangeOFMException. If no element of the faulty tensor has a distance
+        from the same of element of the golden tensor greater than threshold, raise a NoChangeOFMException
+        :param golden: The golden tensor
+        :param faulty: The faulty tensor
+        :param threshold: The threshold
+        :return:
+        """
+
+        if threshold == 0:
+            if torch.all(faulty.eq(golden)):
+                raise NoChangeOFMException
+
+        elif torch.sum((golden - faulty).abs() > threshold) == 0:
+            raise NoChangeOFMException
 
     def get_golden_ifm(self):
         return self.__golden_ifm
@@ -119,13 +138,11 @@ class SmartModule(Module):
 
         if self.__start_from_this_layer:
             input_tensor = self.__golden_ifm
-        else:
+        elif self.__compare_ifm_with_golden:
             # Check for difference with the golden input, if the layer is marked
-            # TODO: check only if the value is under the threshold?
-            check_difference(check_control=self.__compare_ifm_with_golden,
-                             golden=self.__golden_ifm,
-                             faulty=input_tensor,
-                             threshold=self.__threshold)
+            self.__check_difference(golden=self.__golden_ifm,
+                                    faulty=input_tensor,
+                                    threshold=self.__threshold)
 
         # Compute convolutional output
         output_tensor = self.__module(input_tensor)

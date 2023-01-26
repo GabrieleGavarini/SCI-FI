@@ -42,35 +42,6 @@ def main(args):
         loader = load_ImageNet_validation_set(batch_size=args.batch_size,
                                               image_per_class=1)
 
-    # ----------- DEBUG ------------ #
-    # import time
-    # from tqdm import tqdm
-    # with torch.no_grad():
-    #
-    #     multiple_inferences_per_batch = 1
-    #     # Start measuring the time elapsed
-    #     start_time = time.time()
-    #
-    #     # Cycle all the batches in the data loader
-    #     for batch_id, batch in enumerate(tqdm(loader)):
-    #         for _ in range(multiple_inferences_per_batch):
-    #             data, _ = batch
-    #             data = data.to(device)
-    #
-    #             network(data)
-    #
-    #             network_output = network(data)
-    #             faulty_prediction = torch.topk(network_output, k=1)
-    #             clean_prediction = torch.topk(network_output, k=1)
-    #
-    # elapsed = time.time() - start_time
-    #
-    # print(elapsed/(multiple_inferences_per_batch * len(loader)))
-    # exit()
-    #
-
-    # ----------- DEBUG ------------ #
-
     # Folder containing the feature maps
     fm_folder = f'output/feature_maps/{args.network_name}/batch_{args.batch_size}'
     os.makedirs(fm_folder, exist_ok=True)
@@ -125,13 +96,27 @@ def main(args):
     for fault_dropping, fault_delayed_start in reversed(list(itertools.product([True, False], repeat=2))):
 
         # ----- DEBUG ----- #
+
+        # Skip all FI with delayed start
+        # if fault_delayed_start:`
+        #     continue
+
+        # Skip all FI with fault dropping
         # if fault_dropping:
+        #     continue
+
+        # Skip all FI without delayed start
         # if not fault_delayed_start:
+        #     continue
+
+        # Skip all FI without fault dropping
         # if not fault_dropping:
-        # if not fault_delayed_start:`
+        #     continue
+
+        # Only combined FI
         # if not (fault_delayed_start and fault_dropping):
-        #     if not(not fault_delayed_start and not fault_dropping):
-        #         continue
+        #     continue
+
         # ----- DEBUG ----- #
 
         # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
@@ -176,11 +161,16 @@ def main(args):
         if fault_dropping or fault_delayed_start:
 
             smart_layers_manager = SmartLayersManager(network=smart_network,
-                                                      delayed_start_module=delayed_start_module)
+                                                      delayed_start_module=delayed_start_module,
+                                                      device=device,
+                                                      input_size=torch.Size((1, 3, 32, 32)))
+
+            if fault_delayed_start:
+                # Replace the forward module of the target module to enable delayed start
+                smart_layers_manager.replace_module_forward()
 
             # Replace the smart layers of the network
             smart_modules_list = smart_layers_manager.replace_smart_modules(module_classes=module_classes,
-                                                                            device=device,
                                                                             fm_folder=fm_folder,
                                                                             threshold=args.threshold,
                                                                             fault_list=fault_list)
@@ -189,11 +179,6 @@ def main(args):
             if injectable_modules is not None:
                 fault_manager.update_network(smart_network)
                 injectable_modules = fault_manager.injectable_output_modules_list
-
-
-            if fault_delayed_start:
-                # Replace the forward module of the target module to enable delayed start
-                smart_layers_manager.replace_module_forward()
 
             smart_network.eval()
         else:
