@@ -10,7 +10,9 @@ class InjectableOutputModule(Module):
                  device: torch.device,
                  layer_name: str,
                  input_size: torch.Size = None,
-                 output_size: torch.Size = None):
+                 output_size: torch.Size = None,
+                 kernel_size: torch.Size = None):
+
         super().__init__()
 
         # --- PRIVATE PARAMETERS --- #
@@ -33,6 +35,7 @@ class InjectableOutputModule(Module):
         self.layer_name = layer_name
         self.input_size = input_size
         self.output_size = output_size
+        self.kernel_size = kernel_size
 
 
     def inject_fault(self,

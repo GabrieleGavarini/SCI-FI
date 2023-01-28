@@ -95,6 +95,8 @@ class FaultListGenerator:
                         isinstance(info.module, self.module_classes)]
         input_sizes = [torch.Size(info.input_size) for info in summary.summary_list if
                        isinstance(info.module, self.module_classes)]
+        kernel_sizes = [info.module.weight.shape for info in summary.summary_list if
+                        isinstance(info.module, self.module_classes)]
 
         # Replace all layers with injectable convolutional layers
         for layer_id, (layer_name, layer_module) in enumerate(modules_to_replace):
@@ -116,7 +118,8 @@ class FaultListGenerator:
                                                               device=self.device,
                                                               layer_name=layer_name,
                                                               input_size=input_sizes[layer_id],
-                                                              output_size=output_sizes[layer_id])
+                                                              output_size=output_sizes[layer_id],
+                                                              kernel_size=kernel_sizes[layer_id])
 
             # Append the layer to the list
             self.injectable_output_modules_list.append(injectable_output_module)
@@ -204,7 +207,6 @@ class FaultListGenerator:
             for layer_index, (n_per_layer, injectable_layer) in enumerate(pbar):
                 for i in range(n_per_layer):
 
-
                     channel = random_generator.integers(injectable_layer.output_size[1])
                     height = random_generator.integers(injectable_layer.output_size[2])
                     width = random_generator.integers(injectable_layer.output_size[3])
@@ -273,32 +275,50 @@ class FaultListGenerator:
                 raise FileNotFoundError
 
         except FileNotFoundError:
-
-            exhaustive_fault_list = []
-            pbar = tqdm(self.net_layer_shape.items(), desc='Generating fault list', colour='green')
-            for layer_name, layer_shape in pbar:
-
-                # TODO: move here the selection of number of faults per layer
-                # Add all the possible faults to the fault list
-                k = np.arange(layer_shape[0])
-                dim1 = np.arange(layer_shape[1]) if len(layer_shape) > 1 else [None]
-                dim2 = np.arange(layer_shape[2]) if len(layer_shape) > 2 else [None]
-                dim3 = np.arange(layer_shape[3]) if len(layer_shape) > 3 else [None]
-                bits = np.arange(0, 32)
-
-                exhaustive_fault_list = exhaustive_fault_list + list(
-                    itertools.product(*[[layer_name], k, dim1, dim2, dim3, bits]))
-
+            # Initialize the random number generator
             random_generator = np.random.default_rng(seed=seed)
-            n = self.__compute_date_n(N=len(exhaustive_fault_list),
+
+            # Compute how many fault can be injected per layer
+            possible_faults_per_layer = [np.prod(injectable_layer.kernel_size)
+                                         for injectable_layer in self.injectable_output_modules_list]
+
+            # The population of faults
+            total_possible_faults = np.sum(possible_faults_per_layer)
+
+            # The percentage of fault to inject in each layer
+            probability_per_layer = [possible_faults / total_possible_faults
+                                     for possible_faults in possible_faults_per_layer]
+
+            # Compute the total number of fault to inject
+            n = self.__compute_date_n(N=int(total_possible_faults),
                                       p=p,
-                                      e=e,
-                                      t=t)
-            fault_list = random_generator.choice(exhaustive_fault_list, int(n), replace=False)
-            del exhaustive_fault_list
-            fault_list = [WeightFault(layer_name=fault[0],
-                                      tensor_index=tuple([int(i) for i in fault[1:-1]if i is not None]),
-                                      bit=int(fault[-1])) for fault in fault_list]
+                                      t=t,
+                                      e=e)
+
+            # Compute the number of fault to inject in each layer
+            injected_faults_per_layer = [math.ceil(probability * n) for probability in probability_per_layer]
+
+            # Initialize the fault list
+            fault_list = list()
+
+            # Initialize the progress bar
+            pbar = tqdm(zip(injected_faults_per_layer, self.injectable_output_modules_list),
+                        desc='Generating fault list',
+                        colour='green')
+
+            # For each layer, generate the fault list
+            for layer_index, (n_per_layer, injectable_layer) in enumerate(pbar):
+                for i in range(n_per_layer):
+
+                    k = random_generator.integers(injectable_layer.kernel_size[0])
+                    dim1 = random_generator.integers(injectable_layer.kernel_size[1]) if len(injectable_layer.kernel_size) > 1 else [None]
+                    dim2 = random_generator.integers(injectable_layer.kernel_size[2]) if len(injectable_layer.kernel_size) > 2 else [None]
+                    dim3 = random_generator.integers(injectable_layer.kernel_size[3]) if len(injectable_layer.kernel_size) > 3 else [None]
+                    bits = random_generator.integers(0, 32)
+
+                    fault_list.append(WeightFault(layer_name=injectable_layer.layer_name,
+                                                  tensor_index=(k, dim1, dim2, dim3),
+                                                  bit=bits))
 
             if save_fault_list:
                 os.makedirs(fault_list_filename, exist_ok=True)
