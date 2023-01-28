@@ -22,6 +22,12 @@ def get_delayed_start_module_subclass(superclass_type: Type) -> Type:
     # overloading of the forward method, while being able to call the parent forward method
     class DelayedStartModule(superclass_type):
 
+        def __init__(self):
+            self.layers = None
+
+            self.starting_layer = None
+            self.starting_module = None
+
         def forward(self,
                     input_tensor: torch.Tensor) -> torch.Tensor:
             """

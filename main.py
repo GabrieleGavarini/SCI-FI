@@ -5,7 +5,6 @@ import csv
 import itertools
 
 import torch
-from torch.nn import Sequential
 from torchvision.models.densenet import _DenseBlock, _Transition
 from torchvision.models.efficientnet import MBConv, Conv2dNormActivation
 

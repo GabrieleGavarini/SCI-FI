@@ -1,20 +1,18 @@
 import os
 import csv
 import math
-import copy
 import numpy as np
 
-from functools import reduce
 from tqdm import tqdm
 from ast import literal_eval as make_tuple
 
-from typing import Type, List
+from typing import Type
 
 from FaultGenerators.WeightFault import WeightFault
 from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.modules.InjectableOutputModule import injectable_output_module_class
 
-from torch.nn import Module, Conv2d
+from torch.nn import Module
 import torch
 import torchinfo
 
@@ -101,18 +99,6 @@ class FaultListGenerator:
 
         # Replace all layers with injectable convolutional layers
         for layer_id, (layer_name, layer_module) in enumerate(modules_to_replace):
-            # To fine the actual layer with nested layers (e.g. inside a convolutional layer inside a Basic Block in a
-            # ResNet) first separate the layer names using the '.'
-            formatted_names = layer_name.split(sep='.')
-
-            # If there are more than one names as a result of the separation, the Module containing the convolutional layer
-            # is a nested Module
-            if len(formatted_names) > 1:
-                # In this case, access the nested layer iteratively using itertools.reduce and getattr
-                container_layer = reduce(getattr, formatted_names[:-1], self.network)
-            else:
-                # Otherwise, the containing layer is the network itself (no nested blocks)
-                container_layer = self.network
 
             layer_module.__class__ = self.injectable_module_class
             layer_module.init_as_copy(device=self.device,

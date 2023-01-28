@@ -11,7 +11,6 @@ from tqdm import tqdm
 
 from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.WeightFaultInjector import WeightFaultInjector
-from FaultGenerators.modules.InjectableOutputModule import injectable_output_module_class
 from models.SmartLayers.utils import NoChangeOFMException
 
 from typing import List, Union

@@ -2,7 +2,7 @@ import pickle
 
 import torch
 from torch import Tensor
-from torch.nn import Module, Conv2d
+from torch.nn import Module
 
 from models.SmartLayers.utils import NoChangeOFMException
 

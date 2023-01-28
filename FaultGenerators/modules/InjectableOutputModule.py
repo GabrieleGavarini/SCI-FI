@@ -109,4 +109,4 @@ def injectable_output_module_class(parent_module):
             else:
                 return output_clean
 
-    return  InjectableOutputModule
+    return InjectableOutputModule
