@@ -90,7 +90,7 @@ def main(args):
     fault_manager = FaultListGenerator(network=network,
                                        network_name=args.network_name,
                                        device=device,
-                                       module_classes=torch.nn.Conv2d,
+                                       module_class=torch.nn.Conv2d,
                                        input_size=loader.dataset[0][0].unsqueeze(0).shape)
 
     for fault_dropping, fault_delayed_start in reversed(list(itertools.product([True, False], repeat=2))):

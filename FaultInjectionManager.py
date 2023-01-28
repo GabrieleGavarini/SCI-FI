@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.WeightFaultInjector import WeightFaultInjector
-from FaultGenerators.modules.InjectableOutputModule import InjectableOutputModule
+from FaultGenerators.modules.InjectableOutputModule import injectable_output_module_class
 from models.SmartLayers.utils import NoChangeOFMException
 
 from typing import List, Union
@@ -28,7 +28,7 @@ class FaultInjectionManager:
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
-                 injectable_modules: List[Union[InjectableOutputModule, List[InjectableOutputModule]]] = None):
+                 injectable_modules: List[Union[Module, List[Module]]] = None):
 
         self.network = network
         self.network_name = network_name
@@ -303,13 +303,13 @@ class FaultInjectionManager:
 
 
     def __inject_fault_on_neuron(self,
-                                 fault: NeuronFault) -> InjectableOutputModule:
+                                 fault: NeuronFault) -> Module:
         """
         Inject a fault in the neuron
         :param fault: The fault to inject
         :return: The injected layer
         """
-        output_fault_mask = torch.zeros(size=self.injectable_modules[fault.layer_index].output_size)
+        output_fault_mask = torch.zeros(size=self.injectable_modules[fault.layer_index].output_shape)
 
         layer = fault.layer_index
         channel = fault.feature_map_index[0]
@@ -324,7 +324,7 @@ class FaultInjectionManager:
         output_fault_mask = output_fault_mask.int().to(self.device)
 
         # Create a random output
-        output_fault = torch.ones(size=self.injectable_modules[layer].output_size, device=self.device).mul(value)
+        output_fault = torch.ones(size=self.injectable_modules[layer].output_shape, device=self.device).mul(value)
 
         # Inject the fault
         self.injectable_modules[layer].inject_fault(output_fault=output_fault,

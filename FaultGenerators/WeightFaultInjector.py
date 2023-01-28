@@ -19,9 +19,7 @@ class WeightFaultInjector:
         self.tensor_index = tensor_index
         self.bit = bit
 
-        updated_layer_name = self.layer_name.replace('.weight', '._InjectableOutputModule__clean_module.weight')
-
-        self.golden_value = float(self.network.state_dict()[updated_layer_name][self.tensor_index])
+        self.golden_value = float(self.network.state_dict()[self.layer_name][self.tensor_index])
 
         # If the value is not set, then we are doing a bit-flip
         if value is None:
@@ -31,7 +29,7 @@ class WeightFaultInjector:
 
         self.faulty_value = faulty_value
 
-        self.network.state_dict()[updated_layer_name][self.tensor_index] = faulty_value
+        self.network.state_dict()[self.layer_name][self.tensor_index] = faulty_value
 
     def __float32_bit_flip(self):
         """
@@ -76,9 +74,7 @@ class WeightFaultInjector:
             print('CRITICAL ERROR: impossible to restore the golden value before setting a fault')
             quit()
 
-        updated_layer_name = self.layer_name.replace('.weight', '._InjectableOutputModule__clean_module.weight')
-
-        self.network.state_dict()[updated_layer_name][self.tensor_index] = self.golden_value
+        self.network.state_dict()[self.layer_name][self.tensor_index] = self.golden_value
 
     def inject_bit_flip(self,
                         layer_name: str,

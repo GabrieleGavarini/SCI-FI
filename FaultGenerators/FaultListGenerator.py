@@ -1,4 +1,3 @@
-import itertools
 import os
 import csv
 import math
@@ -13,7 +12,7 @@ from typing import Type, List
 
 from FaultGenerators.WeightFault import WeightFault
 from FaultGenerators.NeurontFault import NeuronFault
-from FaultGenerators.modules.InjectableOutputModule import InjectableOutputModule
+from FaultGenerators.modules.InjectableOutputModule import injectable_output_module_class
 
 from torch.nn import Module, Conv2d
 import torch
@@ -26,7 +25,7 @@ class FaultListGenerator:
                  network: Module,
                  network_name: str,
                  device: torch.device,
-                 module_classes: Type[Module] = None,
+                 module_class: Type[Module] = None,
                  input_size: torch.Size = None):
 
         self.network = network
@@ -35,15 +34,17 @@ class FaultListGenerator:
         self.device = device
 
         # The class of the injectable modules
-        self.module_classes = module_classes
+        # TODO: extend to multiple module class
+        self.module_class = module_class
+        self.injectable_module_class = injectable_output_module_class(self.module_class)
 
         # Create the list of injectable module if the module_class is set
-        if self.module_classes is not None:
+        if self.module_class is not None:
             self.__replace_injectable_output_modules(input_size=input_size)
 
         # Name of the injectable layers
         injectable_layer_names = [name.replace('.weight', '') for name, module in self.network.named_modules()
-                                  if isinstance(module, module_classes)]
+                                  if isinstance(module, self.module_class)]
 
         # List of the shape of all the layers that contain weight
         self.net_layer_shape = {name.replace('.weight', ''): param.shape for name, param in self.network.named_parameters()
@@ -78,8 +79,8 @@ class FaultListGenerator:
         :param input_size: The size of the input of the network. Used to extract the output shape of each layer
         """
 
-        modules_to_replace = [(name, copy.deepcopy(module)) for name, module in self.network.named_modules() if
-                              isinstance(module, self.module_classes)]
+        modules_to_replace = [(name, module) for name, module in self.network.named_modules() if
+                              isinstance(module, self.module_class)]
 
         # Initialize the list of all the injectable layers
         self.injectable_output_modules_list = list()
@@ -91,12 +92,12 @@ class FaultListGenerator:
                                     verbose=False)
 
         # Extract the output, input and kernel shape of all the convolutional layers of the network
-        output_sizes = [torch.Size(info.output_size) for info in summary.summary_list if
-                        isinstance(info.module, self.module_classes)]
-        input_sizes = [torch.Size(info.input_size) for info in summary.summary_list if
-                       isinstance(info.module, self.module_classes)]
-        kernel_sizes = [info.module.weight.shape for info in summary.summary_list if
-                        isinstance(info.module, self.module_classes)]
+        output_shapes = [torch.Size(info.output_size) for info in summary.summary_list if
+                         isinstance(info.module, self.module_class)]
+        input_shapes = [torch.Size(info.input_size) for info in summary.summary_list if
+                        isinstance(info.module, self.module_class)]
+        kernel_shapes = [info.module.weight.shape for info in summary.summary_list if
+                         isinstance(info.module, self.module_class)]
 
         # Replace all layers with injectable convolutional layers
         for layer_id, (layer_name, layer_module) in enumerate(modules_to_replace):
@@ -113,25 +114,22 @@ class FaultListGenerator:
                 # Otherwise, the containing layer is the network itself (no nested blocks)
                 container_layer = self.network
 
-            # Create the injectable version of the convolutional layer
-            injectable_output_module = InjectableOutputModule(clean_module=layer_module,
-                                                              device=self.device,
-                                                              layer_name=layer_name,
-                                                              input_size=input_sizes[layer_id],
-                                                              output_size=output_sizes[layer_id],
-                                                              kernel_size=kernel_sizes[layer_id])
+            layer_module.__class__ = self.injectable_module_class
+            layer_module.init_as_copy(device=self.device,
+                                      layer_name=layer_name,
+                                      input_shape=input_shapes[layer_id],
+                                      output_shape=output_shapes[layer_id],
+                                      kernel_shape=kernel_shapes[layer_id])
 
             # Append the layer to the list
-            self.injectable_output_modules_list.append(injectable_output_module)
-
-            # Change the convolutional layer to its injectable counterpart
-            setattr(container_layer, formatted_names[-1], injectable_output_module)
+            self.injectable_output_modules_list.append(layer_module)
 
 
     def update_network(self,
                        network):
         self.network = network
-        self.injectable_output_modules_list = [module for module in self.network.modules() if isinstance(module, InjectableOutputModule)]
+        self.injectable_output_modules_list = [module for module in self.network.modules()
+                                               if isinstance(module, self.injectable_module_class)]
 
 
     def get_neuron_fault_list(self,
@@ -179,7 +177,7 @@ class FaultListGenerator:
             random_generator = np.random.default_rng(seed=seed)
 
             # Compute how many fault can be injected per layer
-            possible_faults_per_layer = [injectable_layer.output_size[1] * injectable_layer.output_size[2] * injectable_layer.output_size[3]
+            possible_faults_per_layer = [injectable_layer.output_shape[1] * injectable_layer.output_shape[2] * injectable_layer.output_shape[3]
                                          for injectable_layer in self.injectable_output_modules_list]
 
             # The population of faults
@@ -207,9 +205,9 @@ class FaultListGenerator:
             for layer_index, (n_per_layer, injectable_layer) in enumerate(pbar):
                 for i in range(n_per_layer):
 
-                    channel = random_generator.integers(injectable_layer.output_size[1])
-                    height = random_generator.integers(injectable_layer.output_size[2])
-                    width = random_generator.integers(injectable_layer.output_size[3])
+                    channel = random_generator.integers(injectable_layer.output_shape[1])
+                    height = random_generator.integers(injectable_layer.output_shape[2])
+                    width = random_generator.integers(injectable_layer.output_shape[3])
                     value = random_generator.random() * 2 - 1
 
                     fault_list.append(NeuronFault(layer_name=injectable_layer.layer_name,
@@ -279,7 +277,7 @@ class FaultListGenerator:
             random_generator = np.random.default_rng(seed=seed)
 
             # Compute how many fault can be injected per layer
-            possible_faults_per_layer = [np.prod(injectable_layer.kernel_size)
+            possible_faults_per_layer = [np.prod(injectable_layer.kernel_shape)
                                          for injectable_layer in self.injectable_output_modules_list]
 
             # The population of faults
@@ -310,10 +308,10 @@ class FaultListGenerator:
             for layer_index, (n_per_layer, injectable_layer) in enumerate(pbar):
                 for i in range(n_per_layer):
 
-                    k = random_generator.integers(injectable_layer.kernel_size[0])
-                    dim1 = random_generator.integers(injectable_layer.kernel_size[1]) if len(injectable_layer.kernel_size) > 1 else [None]
-                    dim2 = random_generator.integers(injectable_layer.kernel_size[2]) if len(injectable_layer.kernel_size) > 2 else [None]
-                    dim3 = random_generator.integers(injectable_layer.kernel_size[3]) if len(injectable_layer.kernel_size) > 3 else [None]
+                    k = random_generator.integers(injectable_layer.kernel_shape[0])
+                    dim1 = random_generator.integers(injectable_layer.kernel_shape[1]) if len(injectable_layer.kernel_shape) > 1 else [None]
+                    dim2 = random_generator.integers(injectable_layer.kernel_shape[2]) if len(injectable_layer.kernel_shape) > 2 else [None]
+                    dim3 = random_generator.integers(injectable_layer.kernel_shape[3]) if len(injectable_layer.kernel_shape) > 3 else [None]
                     bits = random_generator.integers(0, 32)
 
                     fault_list.append(WeightFault(layer_name=injectable_layer.layer_name,
