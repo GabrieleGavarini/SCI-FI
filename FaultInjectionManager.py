@@ -177,22 +177,21 @@ class FaultInjectionManager:
                             fault_layer = get_module_by_name(container_module=self.network,
                                                              module_name=fault.layer_name)
 
-                            # Get the name of the first-tier layer containing the module where the fault is injected
+                            # Get the first-tier layer containing the module where the fault is injected
                             starting_layer = [(name, children) for name, children in delayed_start_module.named_children()
                                               if fault_layer in children.modules()]
-
                             assert len(starting_layer) == 1
                             starting_layer = starting_layer[0][1]
 
                             delayed_start_module.starting_layer = starting_layer
 
-                            starting_module = [module for module in self.__smart_modules_list
-                                               if module in [m for m in starting_layer.modules()]]
+                            # Get the first smart module inside the starting_layer
+                            starting_module = [module for module in starting_layer.modules()
+                                               if isinstance(module, SmartModule)]
+                            assert len(starting_module) == 1
+                            starting_module = starting_module[0]
 
-                            # Select the first smart module inside the faulty first-tier layer
-                            delayed_start_module.starting_module = starting_module[0]
-
-                            assert delayed_start_module.starting_module in [m for m in delayed_start_module.starting_layer.children()]
+                            delayed_start_module.starting_module = starting_module
 
                     # ----------------------------- #
 
