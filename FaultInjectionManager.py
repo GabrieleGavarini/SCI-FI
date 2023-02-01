@@ -16,6 +16,7 @@ from models.SmartLayers.utils import NoChangeOFMException
 from typing import List, Union
 
 from models.SmartLayers.SmartModule import SmartModule
+from models.utils import get_module_by_name
 
 
 class FaultInjectionManager:
@@ -159,6 +160,12 @@ class FaultInjectionManager:
                     # ---- FAULT DELAYED START ---- #
 
                     if fault_delayed_start:
+
+                        # Initialization step. This is also useful if the fault is injected in a non-smart layer, then
+                        # starting_layer and starting_module should be None
+                        delayed_start_module.starting_layer = None
+                        delayed_start_module.starting_module = None
+
                         # Do this only if the fault is injected inside one of the layer that allow delayed start
                         if '._SmartModule__module' in fault.layer_name:
 
@@ -166,9 +173,13 @@ class FaultInjectionManager:
                             if delayed_start_module is None:
                                 delayed_start_module = self.network
 
+                            # Get the module corresponding to the faulty layer
+                            fault_layer = get_module_by_name(container_module=self.network,
+                                                             module_name=fault.layer_name)
+
                             # Get the name of the first-tier layer containing the module where the fault is injected
                             starting_layer = [(name, children) for name, children in delayed_start_module.named_children()
-                                              if fault.layer_name.startswith(name)]
+                                              if fault_layer in children.modules()]
 
                             assert len(starting_layer) == 1
                             starting_layer = starting_layer[0][1]
@@ -182,11 +193,6 @@ class FaultInjectionManager:
                             delayed_start_module.starting_module = starting_module[0]
 
                             assert delayed_start_module.starting_module in [m for m in delayed_start_module.starting_layer.children()]
-                        else:
-                            # If the fault is injected in a non-smart layer, then starting_layer and starting_module
-                            # should be None
-                            delayed_start_module.starting_layer = None
-                            delayed_start_module.starting_module = None
 
                     # ----------------------------- #
 

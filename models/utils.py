@@ -1,11 +1,33 @@
 import os
+from functools import reduce
 
 from tqdm import tqdm
 
 import torch
+from torch.nn import Module
 from torch.utils.data import TensorDataset
 from torchvision import transforms
 from torchvision.datasets import CIFAR10, ImageNet
+
+
+def get_module_by_name(container_module: Module,
+                       module_name: str) -> Module:
+    """
+    Return the instance of the submodule module_name inside the container_module
+    :param container_module: The container module that contains the module_name module
+    :param module_name: The name of the module to find
+    :return: The instance of the submodule with the specified name
+    """
+    module = None
+
+    # To fine the actual layer with nested layers (e.g. inside a convolutional layer inside a Basic Block in a
+    # ResNet, first separate the layer names using the '.'
+    formatted_names = module_name.split(sep='.')
+
+    # Access the nested layer iteratively using itertools.reduce and getattr
+    module = reduce(getattr, formatted_names, container_module)
+
+    return module
 
 
 def load_ImageNet_validation_set(batch_size,
