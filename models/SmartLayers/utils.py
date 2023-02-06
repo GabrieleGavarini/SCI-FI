@@ -1,7 +1,6 @@
 from typing import Type
 
 import torch
-from torch.nn.modules import Sequential
 
 
 class NoChangeOFMException(Exception):
@@ -12,48 +11,59 @@ class NoChangeOFMException(Exception):
     pass
 
 
-class DelayedStartModule(Sequential):
+def get_delayed_start_module_subclass(superclass_type: Type) -> Type:
+    """
+    Return the class dynamically extended from the module class type
+    :param superclass_type: The type of the superclass, used to extend it
+    :return:
+    """
 
-    def __init__(self):
-        super(DelayedStartModule).__init__()
+    # Define a DelayedStartModule class that dynamically extends the delayed_start_module_class to support an
+    # overloading of the forward method, while being able to call the parent forward method
+    class DelayedStartModule(superclass_type):
 
-        self.layers = None
+        def __init__(self):
+            super(DelayedStartModule).__init__()
 
-        self.starting_layer = None
-        self.starting_module = None
+            self.layers = None
 
-    def forward(self,
-                input_tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Smart forward used for fault delayed start. With this smart function, the inference starts from the first layer
-        marked as starting layer and the input of that layer is loaded from disk
-        :param input_tensor: The module input tensor
-        :return: The module output tensor
-        """
+            self.starting_layer = None
+            self.starting_module = None
 
-        # If the starting layer and starting module are set, proceed with the smart forward
-        if self.starting_layer is not None:
-            # Execute the layers iteratively, starting from the one where the fault is injected
-            layer_index = self.layers.index(self.starting_layer)
-        else:
-            layer_index = 0
+        def forward(self,
+                    input_tensor: torch.Tensor) -> torch.Tensor:
+            """
+            Smart forward used for fault delayed start. With this smart function, the inference starts from the first layer
+            marked as starting layer and the input of that layer is loaded from disk
+            :param input_tensor: The module input tensor
+            :return: The module output tensor
+            """
 
-        if self.starting_module is not None:
-            # Create a dummy input
-            x = torch.zeros(size=self.starting_module.input_size, device='cuda')
+            # If the starting layer and starting module are set, proceed with the smart forward
+            if self.starting_layer is not None:
+                # Execute the layers iteratively, starting from the one where the fault is injected
+                layer_index = self.layers.index(self.starting_layer)
+            else:
+                layer_index = 0
 
-            # Specify that the first module inside this layer should load the input from memory and not read from previous
-            # layer
-            self.starting_module.start_from_this_layer()
-        else:
-            x = input_tensor
+            if self.starting_module is not None:
+                # Create a dummy input
+                x = torch.zeros(size=self.starting_module.input_size, device='cuda')
 
-        # Iteratively execute modules in the layer
-        for layer in self.layers[layer_index:]:
-            x = layer(x)
+                # Specify that the first module inside this layer should load the input from memory and not read from previous
+                # layer
+                self.starting_module.start_from_this_layer()
+            else:
+                x = input_tensor
 
-        if self.starting_module is not None:
-            # Clear the marking on the first module
-            self.starting_module.do_not_start_from_this_layer()
+            # Iteratively execute modules in the layer
+            for layer in self.layers[layer_index:]:
+                x = layer(x)
 
-        return x
+            if self.starting_module is not None:
+                # Clear the marking on the first module
+                self.starting_module.do_not_start_from_this_layer()
+
+            return x
+
+    return DelayedStartModule
