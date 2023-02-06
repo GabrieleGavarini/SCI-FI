@@ -1,6 +1,7 @@
 from typing import Type
 
 import torch
+from torch.nn.modules import Sequential
 
 
 class NoChangeOFMException(Exception):
@@ -11,57 +12,48 @@ class NoChangeOFMException(Exception):
     pass
 
 
-def get_delayed_start_module_subclass(superclass_type: Type) -> Type:
-    """
-    Return the class dynamically extended from the module class type
-    :param superclass_type: The type of the superclass, used to extend it
-    :return:
-    """
+class DelayedStartModule(Sequential):
 
-    # Define a DelayedStartModule class that dynamically extends the delayed_start_module_class to support an
-    # overloading of the forward method, while being able to call the parent forward method
-    class DelayedStartModule(superclass_type):
+    def __init__(self):
+        super(DelayedStartModule).__init__()
 
-        def __init__(self):
-            self.layers = None
+        self.layers = None
 
-            self.starting_layer = None
-            self.starting_module = None
+        self.starting_layer = None
+        self.starting_module = None
 
-        def forward(self,
-                    input_tensor: torch.Tensor) -> torch.Tensor:
-            """
-            Smart forward used for fault delayed start. With this smart function, the inference starts from the first layer
-            marked as starting layer and the input of that layer is loaded from disk
-            :param input_tensor: The module input tensor
-            :return: The module output tensor
-            """
+    def forward(self,
+                input_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Smart forward used for fault delayed start. With this smart function, the inference starts from the first layer
+        marked as starting layer and the input of that layer is loaded from disk
+        :param input_tensor: The module input tensor
+        :return: The module output tensor
+        """
 
-            # If the starting layer and starting module are set, proceed with the smart forward
-            if self.starting_layer is not None and self.starting_module is not None:
+        # If the starting layer and starting module are set, proceed with the smart forward
+        if self.starting_layer is not None:
+            # Execute the layers iteratively, starting from the one where the fault is injected
+            layer_index = self.layers.index(self.starting_layer)
+        else:
+            layer_index = 0
 
-                # Execute the layers iteratively, starting from the one where the fault is injected
-                layer_index = self.layers.index(self.starting_layer)
+        if self.starting_module is not None:
+            # Create a dummy input
+            x = torch.zeros(size=self.starting_module.input_size, device='cuda')
 
-                # Create a dummy input
-                # TODO: self.starting_layer.input_size
-                x = torch.zeros(size=self.starting_module.input_size, device='cuda')
+            # Specify that the first module inside this layer should load the input from memory and not read from previous
+            # layer
+            self.starting_module.start_from_this_layer()
+        else:
+            x = input_tensor
 
-                # Specify that the first module inside this layer should load the input from memory and not read from previous
-                # layer
-                self.starting_module.start_from_this_layer()
+        # Iteratively execute modules in the layer
+        for layer in self.layers[layer_index:]:
+            x = layer(x)
 
-                # Iteratively execute modules in the layer
-                for layer in self.layers[layer_index:]:
-                    x = layer(x)
+        if self.starting_module is not None:
+            # Clear the marking on the first module
+            self.starting_module.do_not_start_from_this_layer()
 
-                # Clear the marking on the first module
-                self.starting_module.do_not_start_from_this_layer()
-
-            # Otherwise, used the original forward function of the network
-            else:
-                x = super().forward(input_tensor)
-
-            return x
-
-    return DelayedStartModule
+        return x

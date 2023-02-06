@@ -11,7 +11,7 @@ from torch.nn import Module
 from FaultGenerators.WeightFault import WeightFault
 from models.SmartLayers.SmartModule import SmartModule
 
-from models.SmartLayers.utils import get_delayed_start_module_subclass
+from models.SmartLayers.utils import DelayedStartModule
 
 
 class SmartLayersManager:
@@ -52,7 +52,7 @@ class SmartLayersManager:
         self.delayed_start_module.starting_module = None
 
         # Inherit the delayed start module to a child module that overloads the forward function
-        self.delayed_start_module.__class__ = get_delayed_start_module_subclass(superclass_type=type(self.delayed_start_module))
+        self.delayed_start_module.__class__ = DelayedStartModule
 
         # If not present, add the costume generate_layer_function, otherwise resort to the module implementation of this
         # function
