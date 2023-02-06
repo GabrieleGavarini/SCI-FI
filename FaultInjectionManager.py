@@ -1,8 +1,10 @@
+import os
 import shutil
 import time
 import math
 from datetime import timedelta
 
+import numpy as np
 import torch
 from torch.nn import Module
 from torch.utils.data import DataLoader
@@ -11,6 +13,7 @@ from tqdm import tqdm
 
 from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.WeightFaultInjector import WeightFaultInjector
+from masked_analysis.AnalyzableConv2d import AnalyzableConv2d
 from models.SmartLayers.utils import NoChangeOFMException
 
 from typing import List, Union
@@ -36,6 +39,10 @@ class FaultInjectionManager:
         self.device = device
 
         self.clean_output = clean_output
+        self.faulty_output = list()
+
+        # The folder where to save the output
+        self.__faulty_output_folder = f'output/faulty_output/{self.network_name}/batch_{self.loader.batch_size}'
 
         # The smart modules in the network
         self.__smart_modules_list = smart_modules_list
@@ -51,6 +58,19 @@ class FaultInjectionManager:
         self.injectable_modules = injectable_modules
 
 
+    def run_clean_campaign(self):
+
+        pbar = tqdm(self.loader,
+                    desc='Clean Inference',
+                    colour='green')
+
+        for batch_id, batch in enumerate(pbar):
+            data, _ = batch
+            data = data.to(self.device)
+
+            self.network(data)
+
+
     def run_faulty_campaign_on_weight(self,
                                       fault_model: str,
                                       fault_list: list,
@@ -58,6 +78,7 @@ class FaultInjectionManager:
                                       fault_delayed_start: bool = True,
                                       delayed_start_module: Module = None,
                                       first_batch_only: bool = False,
+                                      save_output: bool = False,
                                       save_feature_maps_statistics: bool = False) -> (str, int):
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
@@ -72,6 +93,7 @@ class FaultInjectionManager:
         the network
         :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
         batch only
+        :param save_output: Default False. Whether to save the output of the network or not
         :param save_feature_maps_statistics: Default False. Whether to save statistics about the feature maps after the
         fault injection
         :return: A tuple formed by : (i) a string containing the formatted time elapsed from the beginning to the end of
@@ -202,6 +224,14 @@ class FaultInjectionManager:
                     else:
                         raise ValueError(f'Invalid fault model {fault_model}')
 
+
+                    # TODO: this class shouldn't manage the search of all the instances of AnalyzableConv2d layers
+                    # Set the fault id
+                    if save_feature_maps_statistics:
+                        for m in self.network.modules():
+                            if isinstance(m, AnalyzableConv2d):
+                                m.fault_id = fault_id
+
                     # Reset memory occupation stats
                     torch.cuda.reset_peak_memory_stats()
 
@@ -221,6 +251,11 @@ class FaultInjectionManager:
                     faulty_prediction_dict[fault_id] = tuple(zip(faulty_indices, faulty_scores))
                     total_different_predictions += different_predictions
 
+                    # Store the faulty prediction if the option is set
+                    if save_output:
+                        self.faulty_output.append({'fault_id': fault_id,
+                                                   'faulty_scores': faulty_scores})
+
                     # Measure the loss in accuracy
                     total_predictions += len(batch[0])
                     different_predictions_percentage = 100 * total_different_predictions / total_predictions
@@ -239,6 +274,20 @@ class FaultInjectionManager:
 
                     # Increment the iteration count
                     total_iterations += 1
+
+                # Save the output to file if the option is set
+                if save_output:
+                    os.makedirs(f'{self.__faulty_output_folder}/{fault_model}', exist_ok=True)
+                    np.save(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}.np', self.faulty_output)
+                    self.faulty_output = list()
+
+                # TODO: this class shouldn't manage the search of all the instances of AnalyzableConv2d layers
+                # Handle the comparison between golden and faulty
+                if save_feature_maps_statistics:
+                    for m in self.network.modules():
+                        if isinstance(m, AnalyzableConv2d):
+                            m.save_to_file()
+                            m.batch_id += 1
 
                 # End after only one batch if the option is specified
                 if first_batch_only:

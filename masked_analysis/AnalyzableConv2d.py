@@ -1,0 +1,89 @@
+import os
+
+import torch
+from torch.nn import Module, Conv2d
+import numpy as np
+
+
+class AnalyzableConv2d(Conv2d):
+
+    def __init__(self, module):
+        super(AnalyzableConv2d, self).__init__()
+
+        self.__module = None
+
+        self.clean_output = None
+        self.clean_inference = True
+        self.batch_id = None
+        self.fault_id = None
+
+        self.network_name = None
+        self.layer_name = None
+        self.batch_size = None
+
+        self.fault_model = None
+
+        self.fault_analysis = None
+
+        self.output_dir = None
+
+        self.initialize_params(layer_name=None)
+
+
+    def initialize_params(self,
+                          layer_name,
+                          network_name,
+                          batch_size,
+                          fault_model):
+
+        self.clean_output = list()
+        self.clean_inference = True
+        self.batch_id = 0
+        self.fault_id = None
+
+        self.layer_name = layer_name
+        self.network_name = network_name
+        self.batch_size = batch_size
+
+        self.fault_model = fault_model
+
+        self.fault_analysis = list()
+
+        self.output_dir = f'output/masked_analysis/{self.network_name}/batch_{self.batch_size}/{self.fault_model}'
+
+
+    def forward(self, input_tensor):
+
+        output_tensor = super().forward(input_tensor)
+
+        if self.clean_inference:
+            self.clean_output.append(output_tensor.detach().cpu())
+            self.batch_id += 1
+        else:
+            difference = torch.abs(output_tensor - self.clean_output[self.batch_id].cuda())
+            result_dict = {
+                'fault_id': self.fault_id,
+                'max_diff': float(difference.max()),
+                'min_diff': float(difference.min()),
+                'avg_diff': float(difference.mean())
+            }
+            self.fault_analysis.append(result_dict)
+
+        return output_tensor
+
+    def save_to_file(self):
+        os.makedirs(self.output_dir, exist_ok=True)
+        np.save(f'{self.output_dir}/{self.layer_name}_{self.batch_id}.np', self.fault_analysis)
+        self.fault_analysis = list()
+
+    def increase_batch(self):
+        self.batch_id += 1
+
+    def reset_batch(self):
+        self.batch_id = 0
+
+    def set_clean_inference(self):
+        self.clean_inference = True
+
+    def set_faulty_inference(self):
+        self.clean_inference = False
