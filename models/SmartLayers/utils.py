@@ -1,6 +1,7 @@
 from typing import Type
 
 import torch
+from torch.nn import Linear
 
 
 class NoChangeOFMException(Exception):
@@ -56,9 +57,23 @@ def get_delayed_start_module_subclass(superclass_type: Type) -> Type:
             else:
                 x = input_tensor
 
+            # Manage the case nno f.c. -> f.c.
+            previous_fc = False
+
             # Iteratively execute modules in the layer
             for layer in self.layers[layer_index:]:
-                x = layer(x)
+                # Check whether the current layer is fully connected
+                current_fc = isinstance(layer, Linear)
+
+                # If this is a fully connected layer, the previous layer was not and the output is not mono-dimensional,
+                # flatten the output
+                if not previous_fc and current_fc and len(x.shape) > 1:
+                    x = layer(x.flatten(1))
+                else:
+                    x = layer(x)
+
+                # Update the helper variable
+                previous_fc = current_fc
 
             if self.starting_module is not None:
                 # Clear the marking on the first module
