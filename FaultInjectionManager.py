@@ -3,6 +3,7 @@ import shutil
 import time
 import math
 from datetime import timedelta
+import copy
 
 import numpy as np
 import torch
@@ -136,7 +137,7 @@ class FaultInjectionManager:
                 pbar = tqdm(fault_list,
                             colour='green',
                             desc=f'FI on b {batch_id}',
-                            ncols=shutil.get_terminal_size().columns * 2)
+                            ncols=shutil.get_terminal_size().columns)
                 for fault_id, fault in enumerate(pbar):
 
                     # Change the description of the progress bar
@@ -245,7 +246,7 @@ class FaultInjectionManager:
 
                     # If fault prediction is None, the fault had no impact. Use golden predictions
                     if faulty_indices is None:
-                        faulty_scores = batch_clean_prediction_scores
+                        faulty_scores = self.clean_output[batch_id]
                         faulty_indices = batch_clean_prediction_indices
 
                     faulty_prediction_dict[fault_id] = tuple(zip(faulty_indices, faulty_scores))
@@ -278,16 +279,24 @@ class FaultInjectionManager:
                 # Save the output to file if the option is set
                 if save_output:
                     os.makedirs(f'{self.__faulty_output_folder}/{fault_model}', exist_ok=True)
-                    np.save(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}.np', self.faulty_output)
+                    np.save(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}', self.faulty_output)
                     self.faulty_output = list()
 
                 # TODO: this class shouldn't manage the search of all the instances of AnalyzableConv2d layers
                 # Handle the comparison between golden and faulty
                 if save_feature_maps_statistics:
+                    output_dir = f'output/masked_analysis/{self.network_name}/batch_{self.loader.batch_size}/{fault_model}'
+                    os.makedirs(output_dir, exist_ok=True)
+
+                    data_to_save = list()
+
                     for m in self.network.modules():
                         if isinstance(m, AnalyzableConv2d):
-                            m.save_to_file()
+                            data_to_save += copy.deepcopy(m.fault_analysis)
+                            m.fault_analysis = list()
                             m.batch_id += 1
+
+                    np.save(f'{output_dir}/batch_{batch_id}', data_to_save)
 
                 # End after only one batch if the option is specified
                 if first_batch_only:
@@ -315,7 +324,7 @@ class FaultInjectionManager:
             # Measure the different predictions
             different_predictions = int(torch.ne(faulty_prediction.values, clean_prediction.values).sum())
 
-            faulty_prediction_scores = [float(fault) for fault in faulty_prediction.values]
+            faulty_prediction_scores = network_output
             faulty_prediction_indices = [int(fault) for fault in faulty_prediction.indices]
 
         except NoChangeOFMException:

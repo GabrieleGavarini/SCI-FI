@@ -27,7 +27,10 @@ class AnalyzableConv2d(Conv2d):
 
         self.output_dir = None
 
-        self.initialize_params(layer_name=None)
+        self.initialize_params(layer_name=None,
+                               network_name=None,
+                               batch_size=None,
+                               fault_model=None)
 
 
     def initialize_params(self,
@@ -49,8 +52,6 @@ class AnalyzableConv2d(Conv2d):
 
         self.fault_analysis = list()
 
-        self.output_dir = f'output/masked_analysis/{self.network_name}/batch_{self.batch_size}/{self.fault_model}'
-
 
     def forward(self, input_tensor):
 
@@ -62,10 +63,11 @@ class AnalyzableConv2d(Conv2d):
         else:
             difference = torch.abs(output_tensor - self.clean_output[self.batch_id].cuda())
             result_dict = {
+                'layer_name': self.layer_name,
                 'fault_id': self.fault_id,
-                'max_diff': float(difference.max()),
-                'min_diff': float(difference.min()),
-                'avg_diff': float(difference.mean())
+                'max_diff': torch.amax(difference, dim=(1, 2, 3)).cpu(),
+                'avg_diff': torch.mean(difference, dim=(1, 2, 3)).cpu(),
+                'num_diff_percentage': torch.not_equal(difference, torch.zeros(difference.shape, device='cuda')).sum(dim=(1, 2, 3)).cpu() / np.prod(difference.shape[1:])
             }
             self.fault_analysis.append(result_dict)
 
@@ -73,7 +75,7 @@ class AnalyzableConv2d(Conv2d):
 
     def save_to_file(self):
         os.makedirs(self.output_dir, exist_ok=True)
-        np.save(f'{self.output_dir}/{self.layer_name}_{self.batch_id}.np', self.fault_analysis)
+        np.save(f'{self.output_dir}/{self.layer_name}_{self.batch_id}', self.fault_analysis)
         self.fault_analysis = list()
 
     def increase_batch(self):

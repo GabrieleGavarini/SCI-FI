@@ -153,6 +153,7 @@ def main(args):
     else:
         smart_modules_list = None
 
+    # Replace Conv2d with AnalyzableConv2d
     analyzable_module_list = list()
     for module_name, module in network.named_modules():
         if isinstance(module, Conv2d):
