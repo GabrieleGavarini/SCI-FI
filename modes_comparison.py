@@ -5,13 +5,14 @@ import csv
 import itertools
 
 import torch
+from torch.nn import Sequential
 from torchvision.models.densenet import _DenseBlock, _Transition
 from torchvision.models.efficientnet import MBConv, Conv2dNormActivation
 
 from OutputFeatureMapsManager import OutputFeatureMapsManager
 from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
-from models.resnet import BasicBlock
+import models
 
 from models.utils import load_ImageNet_validation_set, load_CIFAR10_datasets
 
@@ -35,7 +36,7 @@ def main(args):
                            device=device)
 
     # Load the dataset
-    if 'ResNet' in args.network_name:
+    if 'ResNet' in args.network_name and args.network_name not in ['ResNet18', 'ResNet50']:
         _, _, loader = load_CIFAR10_datasets(test_batch_size=args.batch_size)
     else:
         loader = load_ImageNet_validation_set(batch_size=args.batch_size,
@@ -50,7 +51,10 @@ def main(args):
 
     # Se the module class for the smart operations
     if 'ResNet' in args.network_name:
-        module_classes = BasicBlock
+        if args.network_name in ['ResNet18', 'ResNet50']:
+            module_classes = Sequential
+        else:
+            module_classes = models.resnet.BasicBlock
     elif 'DenseNet' in args.network_name:
         module_classes = (_DenseBlock, _Transition)
     elif 'EfficientNet' in args.network_name:
@@ -198,7 +202,8 @@ def main(args):
                                                                                                      fault_dropping=fault_dropping,
                                                                                                      fault_delayed_start=fault_delayed_start,
                                                                                                      delayed_start_module=delayed_start_module,
-                                                                                                     first_batch_only=True)
+                                                                                                     first_batch_only=True,
+                                                                                                     save_output=True)
 
         if not args.no_log_results:
             os.makedirs('log', exist_ok=True)
