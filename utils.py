@@ -8,7 +8,7 @@ import torch
 
 from models.utils import load_from_dict
 from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
-from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights, densenet121, DenseNet121_Weights
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights, densenet121, DenseNet121_Weights, resnet18, resnet50
 
 
 class UnknownNetworkException(Exception):
@@ -39,7 +39,8 @@ def parse_args():
                         choices=['byzantine_neuron', 'stuckat_params'])
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
-                        choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
+                        choices=['ResNet18', 'ResNet50',
+                                 'ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
                                  'DenseNet121',
                                  'EfficientNet'])
     parser.add_argument('--threshold', type=float, default=0.0,
@@ -60,30 +61,42 @@ def load_network(network_name: str,
     """
 
     if 'ResNet' in network_name:
-        if network_name == 'ResNet20':
-            network_function = resnet20
-        elif network_name == 'ResNet32':
-            network_function = resnet32
-        elif network_name == 'ResNet44':
-            network_function = resnet44
-        elif network_name == 'ResNet56':
-            network_function = resnet56
-        elif network_name == 'ResNet110':
-            network_function = resnet110
-        elif network_name == 'ResNet1202':
-            network_function = resnet1202
+        if network_name in ['ResNet18', 'ResNet50']:
+            if network_name == 'ResNet18':
+                network_function = resnet18
+            elif network_name == 'ResNet50':
+                network_function = resnet50
+            else:
+                raise UnknownNetworkException(f'ERROR: unknown version of ResNet: {network_name}')
+
+            # Load the weights
+            network = network_function(weights='DEFAULT')
+
         else:
-            raise UnknownNetworkException(f'ERROR: unknown version of ResNet: {network_name}')
+            if network_name == 'ResNet20':
+                network_function = resnet20
+            elif network_name == 'ResNet32':
+                network_function = resnet32
+            elif network_name == 'ResNet44':
+                network_function = resnet44
+            elif network_name == 'ResNet56':
+                network_function = resnet56
+            elif network_name == 'ResNet110':
+                network_function = resnet110
+            elif network_name == 'ResNet1202':
+                network_function = resnet1202
+            else:
+                raise UnknownNetworkException(f'ERROR: unknown version of ResNet: {network_name}')
 
-        # Instantiate the network
-        network = network_function()
+            # Instantiate the network
+            network = network_function()
 
-        # Load the weights
-        network_path = f'models/pretrained_models/{network_name}.th'
+            # Load the weights
+            network_path = f'models/pretrained_models/{network_name}.th'
 
-        load_from_dict(network=network,
-                       device=device,
-                       path=network_path)
+            load_from_dict(network=network,
+                           device=device,
+                           path=network_path)
     elif 'DenseNet' in network_name:
         if network_name == 'DenseNet121':
             network = densenet121(weights=DenseNet121_Weights.DEFAULT)

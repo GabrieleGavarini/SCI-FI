@@ -78,8 +78,14 @@ class SmartLayersManager:
         :return A list of all the new InjectableConv2d
         """
 
+        # Select where to look for the module to replace
+        if self.delayed_start_module is not None:
+            modules_to_replace_parent = self.delayed_start_module
+        else:
+            modules_to_replace_parent = self.network
+
         # Find a list of all the convolutional layers
-        modules_to_replace = [(name, copy.deepcopy(module)) for name, module in self.network.named_modules() if isinstance(module, module_classes)]
+        modules_to_replace = [(name, copy.deepcopy(module)) for name, module in modules_to_replace_parent.named_children() if isinstance(module, module_classes)]
 
 
         # Extract the output, input and kernel shape of all the convolutional layers of the network

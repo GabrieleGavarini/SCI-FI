@@ -189,20 +189,20 @@ class FaultInjectionManager:
                         delayed_start_module.starting_layer = None
                         delayed_start_module.starting_module = None
 
+                        # The module where delayed start is enabled
+                        if delayed_start_module is None:
+                            delayed_start_module = self.network
+
+                        # Get the module corresponding to the faulty layer
+                        fault_layer = get_module_by_name(container_module=self.network,
+                                                         module_name=fault.layer_name)
+
+                        # Get the first-tier layer containing the module where the fault is injected
+                        starting_layer = [children for children in delayed_start_module.children()
+                                          if fault_layer in children.modules() and isinstance(children, SmartModule)]
+
                         # Do this only if the fault is injected inside one of the layer that allow delayed start
-                        if '._SmartModule__module' in fault.layer_name:
-
-                            # The module where delayed start is enabled
-                            if delayed_start_module is None:
-                                delayed_start_module = self.network
-
-                            # Get the module corresponding to the faulty layer
-                            fault_layer = get_module_by_name(container_module=self.network,
-                                                             module_name=fault.layer_name)
-
-                            # Get the first-tier layer containing the module where the fault is injected
-                            starting_layer = [children for children in delayed_start_module.children()
-                                              if fault_layer in children.modules()]
+                        if len(starting_layer) != 0:
                             assert len(starting_layer) == 1
                             starting_layer = starting_layer[0]
 
