@@ -14,7 +14,7 @@ from models.SmartLayers.SmartModule import SmartModule
 from models.SmartLayers.utils import get_delayed_start_module_subclass
 
 
-class SmartLayersManager:
+class SmartModulesManager:
 
     def __init__(self,
                  network: Module,
@@ -57,7 +57,7 @@ class SmartLayersManager:
         # If not present, add the costume generate_layer_function, otherwise resort to the module implementation of this
         # function
         if not callable(getattr(self.delayed_start_module, "generate_layer_list", None)):
-            self.delayed_start_module.generate_layer_list = types.MethodType(SmartLayersManager.__generate_layers, self.delayed_start_module)
+            self.delayed_start_module.generate_layer_list = types.MethodType(SmartModulesManager.__generate_layers, self.delayed_start_module)
 
         # Generate the layer list
         self.delayed_start_module.generate_layer_list()

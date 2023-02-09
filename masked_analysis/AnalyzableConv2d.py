@@ -1,7 +1,7 @@
 import os
 
 import torch
-from torch.nn import Module, Conv2d
+from torch.nn import Conv2d
 import numpy as np
 
 
@@ -10,7 +10,7 @@ class AnalyzableConv2d(Conv2d):
     def __init__(self, module):
         super(AnalyzableConv2d, self).__init__()
 
-        self.__module = None
+        self.__module = module
 
         self.clean_output = None
         self.clean_inference = True

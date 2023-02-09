@@ -18,7 +18,6 @@ def get_module_by_name(container_module: Module,
     :param module_name: The name of the module to find
     :return: The instance of the submodule with the specified name
     """
-    module = None
 
     # To fine the actual layer with nested layers (e.g. inside a convolutional layer inside a Basic Block in a
     # ResNet, first separate the layer names using the '.'

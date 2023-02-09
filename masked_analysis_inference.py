@@ -104,13 +104,13 @@ def main(args):
                                                      clean_output=ofm_manager.clean_output,
                                                      injectable_modules=injectable_modules)
 
-    elapsed_time, avg_memory_occupation = fault_injection_executor.run_faulty_campaign_on_weight(fault_model=args.fault_model,
-                                                                                                 fault_list=fault_list,
-                                                                                                 fault_dropping=fault_dropping,
-                                                                                                 fault_delayed_start=fault_delayed_start,
-                                                                                                 delayed_start_module=delayed_start_module,
-                                                                                                 first_batch_only=True,
-                                                                                                 save_output=True)
+    _, _ = fault_injection_executor.run_faulty_campaign_on_weight(fault_model=args.fault_model,
+                                                                  fault_list=fault_list,
+                                                                  fault_dropping=fault_dropping,
+                                                                  fault_delayed_start=fault_delayed_start,
+                                                                  delayed_start_module=delayed_start_module,
+                                                                  first_batch_only=True,
+                                                                  save_output=True)
 
     # Replace Conv2d with AnalyzableConv2d
     analyzable_module_list = list()

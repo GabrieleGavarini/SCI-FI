@@ -85,7 +85,7 @@ class FaultInjectionManager:
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
         layer, loading the input feature maps of the previous layer
         :param fault_model: The faut model for the injection
-        :param fault_list: list of fault to inject. One of ['byzantine_neuron', 'stuckat_params']
+        :param fault_list: list of fault to inject. One of ['byzantine_neuron', 'stuck-at_params']
         :param fault_dropping: Default True. Whether to drop fault or not
         :param fault_delayed_start: Default True. Whether to start the execution from the layer where the faults are
         injected or not
@@ -220,7 +220,7 @@ class FaultInjectionManager:
                     # Inject faults
                     if fault_model == 'byzantine_neuron':
                         injected_layer = self.__inject_fault_on_neuron(fault=fault)
-                    elif fault_model == 'stuckat_params':
+                    elif fault_model == 'stuck-at_params':
                         self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
                     else:
                         raise ValueError(f'Invalid fault model {fault_model}')
@@ -268,7 +268,7 @@ class FaultInjectionManager:
                     # Clean the fault
                     if fault_model == 'byzantine_neuron':
                         injected_layer.clean_fault()
-                    elif fault_model == 'stuckat_params':
+                    elif fault_model == 'stuck-at_params':
                         self.weight_fault_injector.restore_golden()
                     else:
                         raise ValueError(f'Invalid fault model {fault_model}')

@@ -17,7 +17,7 @@ import models
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.WeightFault import WeightFault
-from models.SmartLayers.SmartLayersManager import SmartLayersManager
+from models.SmartLayers.SmartModulesManager import SmartModulesManager
 from models.utils import load_from_dict, load_ImageNet_validation_set, load_CIFAR10_datasets
 from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
 
@@ -47,7 +47,7 @@ def parse_args():
                         help='Test set batch size')
     parser.add_argument('--fault-model', '-m', type=str, required=True,
                         help='The fault model used for the fault injection',
-                        choices=['byzantine_neuron', 'stuckat_params'])
+                        choices=['byzantine_neuron', 'stuck-at_params'])
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
                         choices=['ResNet18', 'ResNet50',
@@ -211,7 +211,7 @@ def get_fault_list(fault_model: str,
                                                                 save_fault_list=True)
         injectable_modules = fault_list_generator.injectable_output_modules_list
 
-    elif fault_model == 'stuckat_params':
+    elif fault_model == 'stuck-at_params':
         fault_list = fault_list_generator.get_weight_fault_list(load_fault_list=True,
                                                                 save_fault_list=True)
         injectable_modules = None
@@ -266,6 +266,8 @@ def formatted_print(fault_list: list,
     :param batch_id: The id of the batch
     :param faulty_prediction_dict: A dictionary where the key is the fault index and the value is a list of all the
     top_1 prediction for all the image of the given the batch
+    :param fault_dropping: Whether fault dropping is used or not
+    :param fault_delayed_start: Whether fault delayed start is used or not
     """
 
     fault_list_rows = [[fault_id,
@@ -340,10 +342,10 @@ def enable_optimizations(
     # Replace the convolutional layers
     if fault_dropping or fault_delayed_start:
 
-        smart_layers_manager = SmartLayersManager(network=network,
-                                                  delayed_start_module=delayed_start_module,
-                                                  device=device,
-                                                  input_size=torch.Size((1, 3, 32, 32)))
+        smart_layers_manager = SmartModulesManager(network=network,
+                                                   delayed_start_module=delayed_start_module,
+                                                   device=device,
+                                                   input_size=torch.Size((1, 3, 32, 32)))
 
         if fault_delayed_start:
             # Replace the forward module of the target module to enable delayed start

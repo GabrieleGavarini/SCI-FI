@@ -1,5 +1,6 @@
 import argparse
 
+
 def parse_args():
     """
     Parse the argument of the network
@@ -13,7 +14,7 @@ def parse_args():
                         help='Test set batch size')
     parser.add_argument('--fault-model', '-m', type=str, required=True,
                         help='The fault model used for the fault injection',
-                        choices=['byzantine_neuron', 'stuckat_params'])
+                        choices=['byzantine_neuron', 'stuck-at_params'])
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
                         choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',

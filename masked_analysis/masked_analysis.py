@@ -1,6 +1,4 @@
 import os
-import glob
-import re
 
 from tqdm import tqdm
 
@@ -60,7 +58,6 @@ def main(args):
 
             # Get index of the critical faults
             critical = ~clean_batch_scores.argmax(dim=1).eq(faulty_batch_scores.argmax(dim=1)).cpu().numpy()
-            critical_index = np.where(critical)
 
             # Get the layer faulty statistics
             try:

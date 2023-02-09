@@ -1,16 +1,14 @@
 import copy
-import os
-import shutil
 import csv
 import itertools
+import os
 
 import torch
 
-from OutputFeatureMapsManager import OutputFeatureMapsManager
-from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
-
-from utils import load_network, get_device, parse_args, UnknownNetworkException, get_loader, get_module_classes, \
+from FaultInjectionManager import FaultInjectionManager
+from OutputFeatureMapsManager import OutputFeatureMapsManager
+from utils import load_network, get_device, parse_args, get_loader, get_module_classes, \
     get_delayed_start_module, enable_optimizations, get_fault_list
 
 
@@ -80,16 +78,16 @@ def main(args):
         #     continue
 
         # Only fully optimized FI
-        # if not (fault_delayed_start and fault_dropping):
-        #     continue
+        if not (fault_delayed_start and fault_dropping):
+            continue
 
         # Only unoptimized FI
         # if fault_delayed_start and fault_dropping:
         #     continue
 
         # Only unoptimized or fully optimized FI
-        if not (not (fault_delayed_start and fault_dropping)) or (fault_delayed_start and fault_dropping):
-            continue
+        # if not (not (fault_delayed_start and fault_dropping)) or (fault_delayed_start and fault_dropping):
+        #     continue
 
         # ----- DEBUG ----- #
 
