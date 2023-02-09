@@ -249,6 +249,9 @@ class FaultInjectionManager:
                         faulty_scores = self.clean_output[batch_id]
                         faulty_indices = batch_clean_prediction_indices
 
+                    # Move the scores to the gpu
+                    faulty_scores = faulty_scores.detach().cpu()
+
                     faulty_prediction_dict[fault_id] = tuple(zip(faulty_indices, faulty_scores))
                     total_different_predictions += different_predictions
 

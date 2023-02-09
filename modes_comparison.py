@@ -7,8 +7,8 @@ import torch
 
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 from FaultInjectionManager import FaultInjectionManager
-from OutputFeatureMapsManager import OutputFeatureMapsManager
-from utils import load_network, get_device, parse_args, get_loader, get_module_classes, \
+from OutputFeatureMapsManager.OutputFeatureMapsManager import OutputFeatureMapsManager
+from utils import get_network, get_device, parse_args, get_loader, get_module_classes, \
     get_delayed_start_module, enable_optimizations, get_fault_list
 
 
@@ -23,8 +23,8 @@ def main(args):
     print(f'Using device {device}')
 
     # Load the network
-    network = load_network(network_name=args.network_name,
-                           device=device)
+    network = get_network(network_name=args.network_name,
+                          device=device)
 
     # Load the dataset
     loader = get_loader(network_name=args.network_name,
@@ -106,9 +106,11 @@ def main(args):
             print('Clearing cache')
             torch.cuda.empty_cache()
 
-        delayed_start_module = get_delayed_start_module(network=smart_network,
-                                                        network_name=args.network_name,
-                                                        fault_delayed_start=fault_delayed_start)
+        if fault_delayed_start:
+            delayed_start_module = get_delayed_start_module(network=smart_network,
+                                                            network_name=args.network_name)
+        else:
+            delayed_start_module = None
 
         # Enable fault delayed start and fault dropping
         injectable_modules, smart_modules_list = enable_optimizations(

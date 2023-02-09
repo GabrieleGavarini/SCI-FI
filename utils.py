@@ -62,8 +62,8 @@ def parse_args():
     return parsed_args
 
 
-def load_network(network_name: str,
-                 device: torch.device) -> torch.nn.Module:
+def get_network(network_name: str,
+                device: torch.device) -> torch.nn.Module:
     """
     Load the network with the specified name
     :param network_name: The name of the network to load
@@ -141,34 +141,29 @@ def get_loader(network_name: str,
         loader = load_ImageNet_validation_set(batch_size=batch_size,
                                               image_per_class=1)
 
+    print(f'Batch size:\t{batch_size} \nNumber of batches:\t{len(loader)}')
+
     return loader
 
 
 def get_delayed_start_module(network: Module,
-                             network_name: str,
-                             fault_delayed_start=False) -> Module:
+                             network_name: str) -> Module:
     """
     Get the delayed_start_module of the given network
     :param network: The instance of the network where to look for the fault_delayed_start module
     :param network_name: The name of the network
-    :param fault_delayed_start: Whether fault_delayed_start is enabled or not
     :return: An instance of the delayed_start_module
     """
 
-    # If fault delayed start is enabled, set the module where this function is enabled, otherwise set the module
-    # to None
-    if fault_delayed_start:
-        # The module to change is dependent on the network. This is the module for which to enable delayed start
-        if 'ResNet' in network_name:
-            delayed_start_module = network
-        elif 'DenseNet' in network_name:
-            delayed_start_module = network.features
-        elif 'EfficientNet' in network_name:
-            delayed_start_module = network.features
-        else:
-            raise UnknownNetworkException
+    # The module to change is dependent on the network. This is the module for which to enable delayed start
+    if 'ResNet' in network_name:
+        delayed_start_module = network
+    elif 'DenseNet' in network_name:
+        delayed_start_module = network.features
+    elif 'EfficientNet' in network_name:
+        delayed_start_module = network.features
     else:
-        delayed_start_module = None
+        raise UnknownNetworkException
 
     return delayed_start_module
 
