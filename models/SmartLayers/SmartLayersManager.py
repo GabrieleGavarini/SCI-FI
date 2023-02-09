@@ -84,8 +84,12 @@ class SmartLayersManager:
         else:
             modules_to_replace_parent = self.network
 
-        # Find a list of all the convolutional layers
-        modules_to_replace = [(name, copy.deepcopy(module)) for name, module in modules_to_replace_parent.named_children() if isinstance(module, module_classes)]
+        # Find a list of all the layers that need to be replaced by a smart module. A layer needs to be replaced if it
+        # is an instance of module_classes and if it is a children of delayed_start_module (or network if it is None).
+        # The name must include all the layers: for this reason the layer must be searched among all the network modules
+        modules_to_replace = [(name, copy.deepcopy(module)) for name, module in self.network.named_modules()
+                              if isinstance(module, module_classes)
+                              and module in modules_to_replace_parent.children()]
 
 
         # Extract the output, input and kernel shape of all the convolutional layers of the network

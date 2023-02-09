@@ -1,28 +1,21 @@
 import copy
 import os
-import shutil
 import csv
 
 import torch
-from torchvision.models.densenet import _DenseBlock, _Transition
-from torchvision.models.efficientnet import MBConv, Conv2dNormActivation
 from torch.nn import Conv2d
 
 from OutputFeatureMapsManager import OutputFeatureMapsManager
 from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 from masked_analysis.AnalyzableConv2d import AnalyzableConv2d
-from models.resnet import BasicBlock
 
-from models.utils import load_ImageNet_validation_set, load_CIFAR10_datasets
-
-from models.SmartLayers.SmartLayersManager import SmartLayersManager
-
-from utils import load_network, get_device, parse_args, UnknownNetworkException
+from utils import parse_args, load_network
+from utils import get_device, get_loader, get_module_classes, get_fault_list, get_delayed_start_module
+from utils import enable_optimizations
 
 
 def main(args):
-
     # Set deterministic algorithms
     torch.use_deterministic_algorithms(mode=True)
 
@@ -36,11 +29,8 @@ def main(args):
                            device=device)
 
     # Load the dataset
-    if 'ResNet' in args.network_name:
-        _, _, loader = load_CIFAR10_datasets(test_batch_size=args.batch_size)
-    else:
-        loader = load_ImageNet_validation_set(batch_size=args.batch_size,
-                                              image_per_class=1)
+    loader = get_loader(network_name=args.network_name,
+                        batch_size=args.batch_size)
 
     # Folder containing the feature maps
     fm_folder = f'output/feature_maps/{args.network_name}/batch_{args.batch_size}'
@@ -50,14 +40,7 @@ def main(args):
     clean_output_folder = f'output/clean_output/{args.network_name}/batch_{args.batch_size}'
 
     # Se the module class for the smart operations
-    if 'ResNet' in args.network_name:
-        module_classes = BasicBlock
-    elif 'DenseNet' in args.network_name:
-        module_classes = (_DenseBlock, _Transition)
-    elif 'EfficientNet' in args.network_name:
-        module_classes = (Conv2dNormActivation, Conv2dNormActivation)
-    else:
-        raise UnknownNetworkException(f'Unknown network {args.network_name}')
+    module_classes = get_module_classes(network_name=args.network_name)
 
     ofm_manager = OutputFeatureMapsManager(network=network,
                                            loader=loader,
@@ -66,92 +49,68 @@ def main(args):
                                            fm_folder=fm_folder,
                                            clean_output_folder=clean_output_folder)
 
-    # Create the fm dir if it doesn't exist
-    os.makedirs(fm_folder, exist_ok=True)
-    # Create the clean output dir if it doesn't exist
-    os.makedirs(clean_output_folder, exist_ok=True)
-
-    if args.force_reload:
-        # Delete folder if already exists
-        shutil.rmtree(fm_folder, ignore_errors=True)
-
-        # Create the fm dir if it doesn't exist
-        os.makedirs(fm_folder, exist_ok=True)
-        # Create the clean output dir if it doesn't exist
-        os.makedirs(clean_output_folder, exist_ok=True)
-
-        # Save the intermediate layer
-        ofm_manager.save_intermediate_layer_outputs()
-    else:
-        # Try to load the clean input
-        ofm_manager.load_clean_output()
-
+    # Try to load the clean input
+    ofm_manager.load_clean_output(force_reload=args.force_reload)
 
     # Generate fault list
-    fault_manager = FaultListGenerator(network=network,
-                                       network_name=args.network_name,
-                                       device=device,
-                                       module_class=torch.nn.Conv2d,
-                                       input_size=loader.dataset[0][0].unsqueeze(0).shape)
+    fault_list_generator = FaultListGenerator(network=network,
+                                              network_name=args.network_name,
+                                              device=device,
+                                              module_class=torch.nn.Conv2d,
+                                              input_size=loader.dataset[0][0].unsqueeze(0).shape)
+
     fault_dropping = True
     fault_delayed_start = True
-    
+
+    # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
+    smart_network = copy.deepcopy(network)
+    fault_list_generator.update_network(smart_network)
+
     # Manage the fault models
-    if args.fault_model == 'byzantine_neuron':
-        clean_fault_list = fault_manager.get_neuron_fault_list(load_fault_list=True,
-                                                               save_fault_list=True)
-        injectable_modules = fault_manager.injectable_output_modules_list
-    elif args.fault_model == 'stuckat_params':
-        clean_fault_list = fault_manager.get_weight_fault_list(load_fault_list=True,
-                                                               save_fault_list=True)
-        injectable_modules = None
-    else:
-        raise ValueError(f'Invalid fault model {args.fault_model}')
+    clean_fault_list, injectable_modules = get_fault_list(fault_model=args.fault_model,
+                                                          fault_list_generator=fault_list_generator)
 
     # Create a copy of the fault list, to avoid that consecutive executions create bugs
     fault_list = copy.deepcopy(clean_fault_list)
 
-    # If fault delayed start is enabled, set the module where this function is enabled, otherwise set the module
-    # to None
-    if fault_delayed_start:
-        # The module to change is dependent on the network. This is the module for which to enable delayed start
-        if 'ResNet' in args.network_name:
-            delayed_start_module = network
-        elif 'DenseNet' in args.network_name:
-            delayed_start_module = network.features
-        elif 'EfficientNet' in args.network_name:
-            delayed_start_module = network.features
-        else:
-            raise UnknownNetworkException
-    else:
-        delayed_start_module = None
+    if not args.forbid_cuda and args.use_cuda:
+        print('Clearing cache')
+        torch.cuda.empty_cache()
 
-    # Replace the convolutional layers
-    if fault_dropping or fault_delayed_start:
+    delayed_start_module = get_delayed_start_module(network=smart_network,
+                                                    network_name=args.network_name,
+                                                    fault_delayed_start=fault_delayed_start)
 
-        smart_layers_manager = SmartLayersManager(network=network,
-                                                  delayed_start_module=delayed_start_module,
-                                                  device=device,
-                                                  input_size=torch.Size((1, 3, 32, 32)))
+    # Enable fault delayed start and fault dropping
+    injectable_modules, smart_modules_list = enable_optimizations(
+        network=smart_network,
+        delayed_start_module=delayed_start_module,
+        module_classes=module_classes,
+        device=device,
+        fm_folder=fm_folder,
+        fault_list_generator=fault_list_generator,
+        fault_list=fault_list,
+        injectable_modules=injectable_modules,
+        fault_delayed_start=fault_delayed_start,
+        fault_dropping=fault_dropping)
 
-        if fault_delayed_start:
-            # Replace the forward module of the target module to enable delayed start
-            smart_layers_manager.replace_module_forward()
 
-        # Replace the smart layers of the network
-        smart_modules_list = smart_layers_manager.replace_smart_modules(module_classes=module_classes,
-                                                                        fm_folder=fm_folder,
-                                                                        threshold=args.threshold,
-                                                                        fault_list=fault_list)
+    # Execute the fault injection campaign with the smart network
+    fault_injection_executor = FaultInjectionManager(network=smart_network,
+                                                     network_name=args.network_name,
+                                                     device=device,
+                                                     smart_modules_list=smart_modules_list,
+                                                     loader=loader,
+                                                     clean_output=ofm_manager.clean_output,
+                                                     injectable_modules=injectable_modules)
 
-        # Update the network. Useful to update the list of injectable layers when injecting in the neurons
-        if injectable_modules is not None:
-            fault_manager.update_network(network)
-            injectable_modules = fault_manager.injectable_output_modules_list
-
-        network.eval()
-    else:
-        smart_modules_list = None
+    elapsed_time, avg_memory_occupation = fault_injection_executor.run_faulty_campaign_on_weight(fault_model=args.fault_model,
+                                                                                                 fault_list=fault_list,
+                                                                                                 fault_dropping=fault_dropping,
+                                                                                                 fault_delayed_start=fault_delayed_start,
+                                                                                                 delayed_start_module=delayed_start_module,
+                                                                                                 first_batch_only=True,
+                                                                                                 save_output=True)
 
     # Replace Conv2d with AnalyzableConv2d
     analyzable_module_list = list()
