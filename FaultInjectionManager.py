@@ -257,8 +257,7 @@ class FaultInjectionManager:
 
                     # Store the faulty prediction if the option is set
                     if save_output:
-                        self.faulty_output.append({'fault_id': fault_id,
-                                                   'faulty_scores': faulty_scores})
+                        self.faulty_output.append(faulty_scores.numpy())
 
                     # Measure the loss in accuracy
                     total_predictions += len(batch[0])

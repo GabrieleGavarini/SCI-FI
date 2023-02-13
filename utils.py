@@ -139,9 +139,9 @@ def get_loader(network_name: str,
         _, _, loader = load_CIFAR10_datasets(test_batch_size=batch_size)
     else:
         loader = load_ImageNet_validation_set(batch_size=batch_size,
-                                              image_per_class=1)
+                                              image_per_class=5)
 
-    print(f'Batch size:\t{batch_size} \nNumber of batches:\t{len(loader)}')
+    print(f'Batch size:\t\t{batch_size} \nNumber of batches:\t{len(loader)}')
 
     return loader
 

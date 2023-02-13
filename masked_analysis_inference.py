@@ -5,12 +5,12 @@ import csv
 import torch
 from torch.nn import Conv2d
 
-from OutputFeatureMapsManager import OutputFeatureMapsManager
+from OutputFeatureMapsManager.OutputFeatureMapsManager import OutputFeatureMapsManager
 from FaultInjectionManager import FaultInjectionManager
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 from masked_analysis.AnalyzableConv2d import AnalyzableConv2d
 
-from utils import parse_args, load_network
+from utils import parse_args, get_network
 from utils import get_device, get_loader, get_module_classes, get_fault_list, get_delayed_start_module
 from utils import enable_optimizations
 
@@ -25,12 +25,19 @@ def main(args):
     print(f'Using device {device}')
 
     # Load the network
-    network = load_network(network_name=args.network_name,
-                           device=device)
+    network = get_network(network_name=args.network_name,
+                          device=device)
 
     # Load the dataset
     loader = get_loader(network_name=args.network_name,
                         batch_size=args.batch_size)
+
+    # Get the module class for the smart operations
+    module_classes = get_module_classes(network_name=args.network_name)
+
+    # get the delayed_start_module
+    delayed_start_module = get_delayed_start_module(network=network,
+                                                    network_name=args.network_name)
 
     # Folder containing the feature maps
     fm_folder = f'output/feature_maps/{args.network_name}/batch_{args.batch_size}'
@@ -39,8 +46,6 @@ def main(args):
     # Folder containing the clean output
     clean_output_folder = f'output/clean_output/{args.network_name}/batch_{args.batch_size}'
 
-    # Se the module class for the smart operations
-    module_classes = get_module_classes(network_name=args.network_name)
 
     ofm_manager = OutputFeatureMapsManager(network=network,
                                            loader=loader,
@@ -62,10 +67,6 @@ def main(args):
     fault_dropping = True
     fault_delayed_start = True
 
-    # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
-    smart_network = copy.deepcopy(network)
-    fault_list_generator.update_network(smart_network)
-
     # Manage the fault models
     clean_fault_list, injectable_modules = get_fault_list(fault_model=args.fault_model,
                                                           fault_list_generator=fault_list_generator)
@@ -77,13 +78,9 @@ def main(args):
         print('Clearing cache')
         torch.cuda.empty_cache()
 
-    delayed_start_module = get_delayed_start_module(network=smart_network,
-                                                    network_name=args.network_name,
-                                                    fault_delayed_start=fault_delayed_start)
-
     # Enable fault delayed start and fault dropping
     injectable_modules, smart_modules_list = enable_optimizations(
-        network=smart_network,
+        network=network,
         delayed_start_module=delayed_start_module,
         module_classes=module_classes,
         device=device,
@@ -96,7 +93,7 @@ def main(args):
 
 
     # Execute the fault injection campaign with the smart network
-    fault_injection_executor = FaultInjectionManager(network=smart_network,
+    fault_injection_executor = FaultInjectionManager(network=network,
                                                      network_name=args.network_name,
                                                      device=device,
                                                      smart_modules_list=smart_modules_list,

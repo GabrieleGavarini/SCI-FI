@@ -140,7 +140,7 @@ def main(args):
                                                                                                      fault_dropping=fault_dropping,
                                                                                                      fault_delayed_start=fault_delayed_start,
                                                                                                      delayed_start_module=delayed_start_module,
-                                                                                                     first_batch_only=True,
+                                                                                                     first_batch_only=False,
                                                                                                      save_output=True)
 
         if not args.no_log_results:
