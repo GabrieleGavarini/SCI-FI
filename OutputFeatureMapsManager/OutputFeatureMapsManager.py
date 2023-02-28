@@ -77,7 +77,7 @@ class OutputFeatureMapsManager:
         # Name of the file where to save the clean output
         self.__clean_output_folder = clean_output_folder
         os.makedirs(self.__clean_output_folder, exist_ok=True)
-        self.__clean_output_path = f'{clean_output_folder}/clean_output.pt'
+        self.__clean_output_path = f'{clean_output_folder}/clean_output.npy'
 
     def __get_layer_hook(self,
                          batch_id: int,
@@ -149,15 +149,16 @@ class OutputFeatureMapsManager:
                                                                                              save_to_cpu=save_to_cpu)))
 
                 # Execute the network and save the clean output
-                clean_output_batch = self.network(data)
-                clean_output_batch_list.append(clean_output_batch)
+                clean_output_batch = self.network(data).detach().cpu()
+                clean_output_batch_list.append(clean_output_batch.numpy())
 
                 # Remove all the hooks
                 self.__remove_all_hooks()
 
-        self.clean_output = clean_output_batch_list
         # Save the clean output to file
-        pickle.dump(self.clean_output, open(self.__clean_output_path, 'wb'))
+        np.save(self.__clean_output_path, clean_output_batch_list)
+        self.clean_output = [torch.tensor(tensor, device=self.device) for tensor in np.load(self.__clean_output_path)]
+        # pickle.dump(self.clean_output, open(self.__clean_output_path, 'wb'))
 
         self.input_feature_maps_size = self.__input_feature_maps_size / len(self.loader)
         self.output_feature_maps_size = self.__output_feature_maps_size / len(self.loader)
@@ -197,7 +198,8 @@ class OutputFeatureMapsManager:
 
         else:
             try:
-                self.clean_output = [tensor.to(self.device) for tensor in pickle.load(open(self.__clean_output_path, 'rb'))]
+                self.clean_output = [torch.tensor(tensor, device=self.device)
+                                     for tensor in np.load(self.__clean_output_path, allow_pickle=True)]
             except FileNotFoundError:
                 print('No previous clean output found, starting clean inference...')
                 self.save_intermediate_layer_outputs()

@@ -10,7 +10,9 @@ import torch
 from torch.nn import Sequential, Module
 from torchvision.models.densenet import _DenseBlock, _Transition
 from torchvision.models.efficientnet import Conv2dNormActivation
-from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights, densenet121, DenseNet121_Weights, resnet18, resnet50
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights, efficientnet_b4, EfficientNet_B4_Weights
+from torchvision.models import densenet121, DenseNet121_Weights
+from torchvision.models import resnet18, resnet50, ResNet18_Weights, ResNet50_Weights
 from torch.utils.data import DataLoader
 
 import models
@@ -53,7 +55,7 @@ def parse_args():
                         choices=['ResNet18', 'ResNet50',
                                  'ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
                                  'DenseNet121',
-                                 'EfficientNet'])
+                                 'EfficientNet_B0', 'EfficientNet_B4'])
     parser.add_argument('--threshold', type=float, default=0.0,
                         help='The threshold under which an error is undetected')
 
@@ -75,13 +77,15 @@ def get_network(network_name: str,
         if network_name in ['ResNet18', 'ResNet50']:
             if network_name == 'ResNet18':
                 network_function = resnet18
+                weights = ResNet18_Weights.DEFAULT
             elif network_name == 'ResNet50':
                 network_function = resnet50
+                weights = ResNet50_Weights.IMAGENET1K_V2
             else:
                 raise UnknownNetworkException(f'ERROR: unknown version of ResNet: {network_name}')
 
             # Load the weights
-            network = network_function(weights='DEFAULT')
+            network = network_function(weights=weights)
 
         else:
             if network_name == 'ResNet20':
@@ -114,8 +118,13 @@ def get_network(network_name: str,
         else:
             raise UnknownNetworkException(f'ERROR: unknown version of DenseNet: {network_name}')
 
-    elif network_name == 'EfficientNet':
-        network = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+    elif 'EfficientNet' in network_name:
+        if network_name == 'EfficientNet_B0':
+            network = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+        elif network_name == 'EfficientNet_B4':
+            network = efficientnet_b4(weights=EfficientNet_B4_Weights.DEFAULT)
+        else:
+            raise UnknownNetworkException(f'ERROR: unknown network: {network_name}')
 
     else:
         raise UnknownNetworkException(f'ERROR: unknown network: {network_name}')

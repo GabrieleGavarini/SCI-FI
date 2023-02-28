@@ -1,3 +1,4 @@
+import csv
 import os
 import shutil
 import time
@@ -41,6 +42,9 @@ class FaultInjectionManager:
 
         self.clean_output = clean_output
         self.faulty_output = list()
+
+        # The folder used for the logg
+        self.__log_folder = f'log/{self.network_name}/batch_{self.loader.batch_size}'
 
         # The folder where to save the output
         self.__faulty_output_folder = f'output/faulty_output/{self.network_name}/batch_{self.loader.batch_size}'
@@ -119,10 +123,17 @@ class FaultInjectionManager:
             # Start measuring the time elapsed
             start_time = time.time()
 
+            # The dict measuring the accuracy of each batch
+            accuracy_dict = dict()
+
             # Cycle all the batches in the data loader
             for batch_id, batch in enumerate(self.loader):
-                data, _ = batch
+                data, target = batch
                 data = data.to(self.device)
+
+                # The list of the accuracy of the network for each fault
+                accuracy_batch_dict = dict()
+                accuracy_dict[batch_id] = accuracy_batch_dict
 
                 faulty_prediction_dict = dict()
                 batch_clean_prediction_scores = [float(fault) for fault in torch.topk(self.clean_output[batch_id], k=1).values]
@@ -249,6 +260,9 @@ class FaultInjectionManager:
                         faulty_scores = self.clean_output[batch_id]
                         faulty_indices = batch_clean_prediction_indices
 
+                    # Measure the accuracy of the batch
+                    accuracy_batch_dict[fault_id] = float(torch.sum(target.eq(torch.tensor(faulty_indices)))/len(target))
+
                     # Move the scores to the gpu
                     faulty_scores = faulty_scores.detach().cpu()
 
@@ -277,6 +291,13 @@ class FaultInjectionManager:
 
                     # Increment the iteration count
                     total_iterations += 1
+
+                # Log the accuracy of the batch
+                os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
+                log_filename = f'{self.__log_folder}/{fault_model}/batch_{batch_id}.csv'
+                with open(log_filename, 'w') as log_file:
+                    log_writer = csv.writer(log_file)
+                    log_writer.writerows(accuracy_batch_dict.items())
 
                 # Save the output to file if the option is set
                 if save_output:
@@ -308,6 +329,21 @@ class FaultInjectionManager:
                 if fault_dropping or fault_delayed_start:
                     for smart_module in self.__smart_modules_list:
                         smart_module.unload_golden()
+
+
+        # Measure the average accuracy
+        average_accuracy_dict = dict()
+        for fault_id in range(len(fault_list)):
+            fault_accuracy = np.average([accuracy_batch_dict[fault_id] for _, accuracy_batch_dict in accuracy_dict.items()])
+            average_accuracy_dict[fault_id] = float(fault_accuracy)
+
+        # Final log
+        os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
+        log_filename = f'{self.__log_folder}/{fault_model}/all_batches.csv'
+        with open(log_filename, 'w') as log_file:
+            log_writer = csv.writer(log_file)
+            log_writer.writerows(average_accuracy_dict.items())
+
 
         elapsed = math.ceil(time.time() - start_time)
 
