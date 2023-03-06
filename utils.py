@@ -20,8 +20,9 @@ from FaultGenerators.FaultListGenerator import FaultListGenerator
 from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.WeightFault import WeightFault
 from models.SmartLayers.SmartModulesManager import SmartModulesManager
-from models.utils import load_from_dict, load_ImageNet_validation_set, load_CIFAR10_datasets
+from models.utils import load_from_dict, load_ImageNet_validation_set, load_CIFAR10_datasets, load_MNIST_datasets
 from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
+from models.lenet import LeNet5
 
 
 class UnknownNetworkException(Exception):
@@ -52,7 +53,8 @@ def parse_args():
                         choices=['byzantine_neuron', 'stuck-at_params'])
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
-                        choices=['ResNet18', 'ResNet50',
+                        choices=['LeNet5',
+                                 'ResNet18', 'ResNet50',
                                  'ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
                                  'DenseNet121',
                                  'EfficientNet_B0', 'EfficientNet_B4'])
@@ -118,6 +120,17 @@ def get_network(network_name: str,
         else:
             raise UnknownNetworkException(f'ERROR: unknown version of DenseNet: {network_name}')
 
+    elif 'LeNet5' in network_name:
+        network = LeNet5()
+
+        # Load the weights
+        network_path = f'models/pretrained_models/{network_name}.pt'
+
+        load_from_dict(network=network,
+                       device=device,
+                       path=network_path)
+
+
     elif 'EfficientNet' in network_name:
         if network_name == 'EfficientNet_B0':
             network = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
@@ -137,18 +150,25 @@ def get_network(network_name: str,
 
 
 def get_loader(network_name: str,
-               batch_size: int) -> DataLoader:
+               batch_size: int,
+               image_per_class: int = None) -> DataLoader:
     """
     Return the loader corresponding to a given network and with a specific batch size
     :param network_name: The name of the network
     :param batch_size: The batch size
+    :param image_per_class: How many images to load for each class
     :return: The DataLoader
     """
     if 'ResNet' in network_name and network_name not in ['ResNet18', 'ResNet50']:
-        _, _, loader = load_CIFAR10_datasets(test_batch_size=batch_size)
+        _, _, loader = load_CIFAR10_datasets(test_batch_size=batch_size,
+                                             test_image_per_class=image_per_class)
+    elif 'LeNet' in network_name:
+        _, loader = load_MNIST_datasets(test_batch_size=batch_size)
     else:
+        if image_per_class is None:
+            image_per_class = 5
         loader = load_ImageNet_validation_set(batch_size=batch_size,
-                                              image_per_class=5)
+                                              image_per_class=image_per_class)
 
     print(f'Batch size:\t\t{batch_size} \nNumber of batches:\t{len(loader)}')
 
@@ -165,7 +185,9 @@ def get_delayed_start_module(network: Module,
     """
 
     # The module to change is dependent on the network. This is the module for which to enable delayed start
-    if 'ResNet' in network_name:
+    if 'LeNet' in network_name:
+        delayed_start_module = network
+    elif 'ResNet' in network_name:
         delayed_start_module = network
     elif 'DenseNet' in network_name:
         delayed_start_module = network.features
@@ -186,7 +208,9 @@ def get_module_classes(network_name: str) -> Union[List[type], type]:
     :return: The type of modules (or of a single module) that will should be replaced by smart modules in the target
     network
     """
-    if 'ResNet' in network_name:
+    if 'LeNet' in network_name:
+        module_classes = Sequential
+    elif 'ResNet' in network_name:
         if network_name in ['ResNet18', 'ResNet50']:
             module_classes = Sequential
         else:
@@ -339,6 +363,7 @@ def enable_optimizations(
         fm_folder: str,
         fault_list_generator: FaultListGenerator,
         fault_list: Union[List[NeuronFault], List[WeightFault]],
+        input_size: torch.Size = torch.Size((1, 3, 32, 32)),
         injectable_modules: List[Module] = None,
         fault_delayed_start: bool = True,
         fault_dropping: bool = True):
@@ -349,7 +374,7 @@ def enable_optimizations(
         smart_layers_manager = SmartModulesManager(network=network,
                                                    delayed_start_module=delayed_start_module,
                                                    device=device,
-                                                   input_size=torch.Size((1, 3, 32, 32)))
+                                                   input_size=input_size)
 
         if fault_delayed_start:
             # Replace the forward module of the target module to enable delayed start

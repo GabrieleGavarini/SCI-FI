@@ -311,15 +311,43 @@ class FaultInjectionManager:
                     output_dir = f'output/masked_analysis/{self.network_name}/batch_{self.loader.batch_size}/{fault_model}'
                     os.makedirs(output_dir, exist_ok=True)
 
-                    data_to_save = list()
+                    data_to_save = {
+                        'layer_name': list(),
+                        'fault_id': list(),
+                        'PSNR': list(),
+                        'euclidean_distance': list(),
+                        'max_diff': list(),
+                        'avg_diff': list(),
+                        'num_diff_percentage': list()
+                    }
 
                     for m in self.network.modules():
                         if isinstance(m, AnalyzableConv2d):
-                            data_to_save += copy.deepcopy(m.fault_analysis)
-                            m.fault_analysis = list()
+                            data_to_save['layer_name'] = np.concatenate([data_to_save['layer_name'],
+                                                                         m.fault_analysis['layer_name']])
+                            data_to_save['fault_id'] = np.concatenate([data_to_save['fault_id'],
+                                                                       m.fault_analysis['fault_id']])
+                            data_to_save['PSNR'] = np.concatenate([data_to_save['PSNR'],
+                                                                   m.fault_analysis['PSNR']])
+                            data_to_save['euclidean_distance'] = np.concatenate([data_to_save['euclidean_distance'],
+                                                                                 m.fault_analysis['euclidean_distance']])
+                            data_to_save['max_diff'] = np.concatenate([data_to_save['max_diff'],
+                                                                       m.fault_analysis['max_diff']])
+                            data_to_save['avg_diff'] = np.concatenate([data_to_save['avg_diff'],
+                                                                       m.fault_analysis['avg_diff']])
+                            data_to_save['num_diff_percentage'] = np.concatenate([data_to_save['num_diff_percentage'],
+                                                                                  m.fault_analysis['num_diff_percentage']])
+                            m.initialize_fault_analysis_dict()
                             m.batch_id += 1
 
-                    np.save(f'{output_dir}/batch_{batch_id}', data_to_save)
+                    np.savez(f'{output_dir}/batch_{batch_id}',
+                             layer_name=data_to_save['layer_name'],
+                             fault_id=data_to_save['fault_id'],
+                             PSNR=data_to_save['PSNR'],
+                             euclidean_distance=data_to_save['euclidean_distance'],
+                             max_diff=data_to_save['max_diff'],
+                             avg_diff=data_to_save['avg_diff'],
+                             num_diff_percentage=data_to_save['num_diff_percentage'])
 
                 # End after only one batch if the option is specified
                 if first_batch_only:

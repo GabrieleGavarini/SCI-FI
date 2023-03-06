@@ -17,7 +17,8 @@ def parse_args():
                         choices=['byzantine_neuron', 'stuck-at_params'])
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
-                        choices=['ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
+                        choices=['LeNet5',
+                                 'ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
                                  'DenseNet121',
                                  'EfficientNet'])
 

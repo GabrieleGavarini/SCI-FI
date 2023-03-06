@@ -36,6 +36,9 @@ class FaultListGenerator:
         self.module_class = module_class
         self.injectable_module_class = injectable_output_module_class(self.module_class)
 
+        # List of injectable modules. Used only for neurons injection
+        self.injectable_output_modules_list = None
+
         # Create the list of injectable module if the module_class is set
         if self.module_class is not None:
             self.__replace_injectable_output_modules(input_size=input_size)
@@ -50,9 +53,6 @@ class FaultListGenerator:
 
         # The fault list
         self.fault_list = None
-
-        # List of injectable modules. Used only for neurons injection
-        self.injectable_output_modules_list = None
 
     @staticmethod
     def __compute_date_n(N: int,

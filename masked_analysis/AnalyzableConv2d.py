@@ -4,6 +4,8 @@ import torch
 from torch.nn import Conv2d
 import numpy as np
 
+from torchmetrics.functional import peak_signal_noise_ratio
+
 
 class AnalyzableConv2d(Conv2d):
 
@@ -23,7 +25,7 @@ class AnalyzableConv2d(Conv2d):
 
         self.fault_model = None
 
-        self.fault_analysis = None
+        self.fault_analysis = dict()
 
         self.output_dir = None
 
@@ -50,7 +52,19 @@ class AnalyzableConv2d(Conv2d):
 
         self.fault_model = fault_model
 
-        self.fault_analysis = list()
+        self.initialize_fault_analysis_dict()
+
+
+    def initialize_fault_analysis_dict(self):
+        self.fault_analysis = {
+            'layer_name': list(),
+            'fault_id': list(),
+            'PSNR': list(),
+            'euclidean_distance': list(),
+            'max_diff': list(),
+            'avg_diff': list(),
+            'num_diff_percentage': list()
+        }
 
 
     def forward(self, input_tensor):
@@ -61,15 +75,33 @@ class AnalyzableConv2d(Conv2d):
             self.clean_output.append(output_tensor.detach().cpu())
             self.batch_id += 1
         else:
-            difference = torch.abs(output_tensor - self.clean_output[self.batch_id].cuda())
-            result_dict = {
-                'layer_name': self.layer_name,
-                'fault_id': self.fault_id,
-                'max_diff': torch.amax(difference, dim=(1, 2, 3)).cpu(),
-                'avg_diff': torch.mean(difference, dim=(1, 2, 3)).cpu(),
-                'num_diff_percentage': torch.not_equal(difference, torch.zeros(difference.shape, device='cuda')).sum(dim=(1, 2, 3)).cpu() / np.prod(difference.shape[1:])
-            }
-            self.fault_analysis.append(result_dict)
+
+            clean_tensor = self.clean_output[self.batch_id].cuda()
+
+            # Compute the similarity metrics
+            data_range = clean_tensor.max() - clean_tensor.min()
+            psnr = peak_signal_noise_ratio(preds=output_tensor,
+                                           target=clean_tensor,
+                                           reduction=None,
+                                           dim=(1, 2, 3),
+                                           data_range=data_range).cpu()
+
+            euclidean_distance = ((clean_tensor.flatten(start_dim=1) - output_tensor.flatten(start_dim=1))**2).sum(axis=1).cpu()
+
+            # Compute the difference metric
+            difference = torch.abs(output_tensor - clean_tensor)
+            max_diff = torch.amax(difference, dim=(1, 2, 3)).cpu()
+            avg_diff = torch.mean(difference, dim=(1, 2, 3)).cpu()
+            num_diff_percentage = torch.not_equal(difference, torch.zeros(difference.shape, device='cuda')).sum(dim=(1, 2, 3)).cpu() / np.prod(difference.shape[1:])
+
+            # Append results to dict
+            self.fault_analysis['layer_name'].append(self.layer_name)
+            self.fault_analysis['fault_id'].append(self.fault_id)
+            self.fault_analysis['PSNR'].append(psnr)
+            self.fault_analysis['euclidean_distance'].append(euclidean_distance)
+            self.fault_analysis['max_diff'].append(max_diff)
+            self.fault_analysis['avg_diff'].append(avg_diff)
+            self.fault_analysis['num_diff_percentage'].append(num_diff_percentage)
 
         return output_tensor
 

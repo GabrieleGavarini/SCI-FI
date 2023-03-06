@@ -30,7 +30,8 @@ def main(args):
 
     # Load the dataset
     loader = get_loader(network_name=args.network_name,
-                        batch_size=args.batch_size)
+                        batch_size=args.batch_size,
+                        image_per_class=10)
 
     # Get the module class for the smart operations
     module_classes = get_module_classes(network_name=args.network_name)
@@ -87,27 +88,10 @@ def main(args):
         fm_folder=fm_folder,
         fault_list_generator=fault_list_generator,
         fault_list=fault_list,
+        input_size=loader.dataset[0][0].unsqueeze(dim=0).shape,
         injectable_modules=injectable_modules,
         fault_delayed_start=fault_delayed_start,
         fault_dropping=fault_dropping)
-
-
-    # Execute the fault injection campaign with the smart network
-    fault_injection_executor = FaultInjectionManager(network=network,
-                                                     network_name=args.network_name,
-                                                     device=device,
-                                                     smart_modules_list=smart_modules_list,
-                                                     loader=loader,
-                                                     clean_output=ofm_manager.clean_output,
-                                                     injectable_modules=injectable_modules)
-
-    _, _ = fault_injection_executor.run_faulty_campaign_on_weight(fault_model=args.fault_model,
-                                                                  fault_list=fault_list,
-                                                                  fault_dropping=fault_dropping,
-                                                                  fault_delayed_start=fault_delayed_start,
-                                                                  delayed_start_module=delayed_start_module,
-                                                                  first_batch_only=True,
-                                                                  save_output=True)
 
     # Replace Conv2d with AnalyzableConv2d
     analyzable_module_list = list()

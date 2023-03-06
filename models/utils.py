@@ -1,13 +1,12 @@
 import os
 from functools import reduce
-
 from tqdm import tqdm
 
 import torch
 from torch.nn import Module
 from torch.utils.data import TensorDataset
 from torchvision import transforms
-from torchvision.datasets import CIFAR10, ImageNet
+from torchvision.datasets import CIFAR10, ImageNet, MNIST
 
 
 def get_module_by_name(container_module: Module,
@@ -78,6 +77,33 @@ def load_ImageNet_validation_set(batch_size,
     print('Dataset loaded')
 
     return val_loader
+
+
+def load_MNIST_datasets(train_batch_size=32, test_batch_size=1):
+
+    train_loader = torch.utils.data.DataLoader(
+        MNIST('weights/files/', train=True, download=True,
+              transform=transforms.Compose([
+                  transforms.ToTensor(),
+                  transforms.Resize((32, 32)),
+                  transforms.Normalize(
+                      (0.1307,), (0.3081,))
+              ])),
+        batch_size=train_batch_size, shuffle=False)
+
+    test_loader = torch.utils.data.DataLoader(
+        MNIST('weights/files/', train=False, download=True,
+              transform=transforms.Compose([
+                  transforms.ToTensor(),
+                  transforms.Resize((32, 32)),
+                  transforms.Normalize(
+                      (0.1307,), (0.3081,))
+              ])),
+        batch_size=test_batch_size, shuffle=True)
+
+    print('Dataset loaded')
+
+    return train_loader, test_loader
 
 
 def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1, test_image_per_class=None):
