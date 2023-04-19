@@ -105,6 +105,13 @@ def injectable_output_module_class(parent_module):
                 masked_output_clean = torch.mul(output_clean, self.__output_clean_mask)
                 masked_output_fault = torch.mul(self.__output_fault, self.__output_fault_mask)
 
+                # This operation is needed when you do not have the output normalized between -1 and 1: the effect is
+                # that the neuron has a random value inside its range
+                max_tensor = torch.max(output_clean)
+                min_tensor = torch.min(output_clean)
+                range_width = torch.abs(max_tensor - min_tensor)
+                masked_output_fault = torch.mul(masked_output_fault, range_width)
+
                 return masked_output_clean + masked_output_fault
             else:
                 return output_clean

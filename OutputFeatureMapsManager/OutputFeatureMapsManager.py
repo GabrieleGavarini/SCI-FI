@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import torch
 from torch.nn.modules import Module
@@ -51,7 +52,8 @@ class OutputFeatureMapsManager:
 
         # A list of dictionary where every element is the file containing the output feature map for a batch and for the
         # layer
-        os.makedirs(fm_folder, exist_ok=True)
+        self.__fm_folder = fm_folder
+        os.makedirs(self.__fm_folder, exist_ok=True)
         self.ifm_paths = [{j: f'./{fm_folder}/ifm_batch_{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
 
         # An integer indicating the number of bytes occupied by the Output Feature Maps (without taking into account
@@ -73,7 +75,9 @@ class OutputFeatureMapsManager:
         self.clean_output = None
 
         # Name of the file where to save the clean output
-        self.__clean_output_path = f'{clean_output_folder}/clean_output.pt'
+        self.__clean_output_folder = clean_output_folder
+        os.makedirs(self.__clean_output_folder, exist_ok=True)
+        self.__clean_output_path = f'{clean_output_folder}/clean_output.npy'
 
     def __get_layer_hook(self,
                          batch_id: int,
@@ -145,15 +149,16 @@ class OutputFeatureMapsManager:
                                                                                              save_to_cpu=save_to_cpu)))
 
                 # Execute the network and save the clean output
-                clean_output_batch = self.network(data)
-                clean_output_batch_list.append(clean_output_batch)
+                clean_output_batch = self.network(data).detach().cpu()
+                clean_output_batch_list.append(clean_output_batch.numpy())
 
                 # Remove all the hooks
                 self.__remove_all_hooks()
 
-        self.clean_output = clean_output_batch_list
         # Save the clean output to file
-        pickle.dump(self.clean_output, open(self.__clean_output_path, 'wb'))
+        np.save(self.__clean_output_path, clean_output_batch_list)
+        self.clean_output = [torch.tensor(tensor, device=self.device) for tensor in np.load(self.__clean_output_path)]
+        # pickle.dump(self.clean_output, open(self.__clean_output_path, 'wb'))
 
         self.input_feature_maps_size = self.__input_feature_maps_size / len(self.loader)
         self.output_feature_maps_size = self.__output_feature_maps_size / len(self.loader)
@@ -172,13 +177,29 @@ class OutputFeatureMapsManager:
         print(f'\tRelative Total Overhead:'
               f'\t{total_relative_occupation:.2f}%')
 
-    def load_clean_output(self) -> None:
+    def load_clean_output(self,
+                          force_reload: bool = False) -> None:
         """
         Load the clean output of the network. If the file is not found, compute the clean output (and the clean output
         feature maps)
+        :param force_reload: Whether to force the computation of the clean output
         """
-        try:
-            self.clean_output = [tensor.to(self.device) for tensor in pickle.load(open(self.__clean_output_path, 'rb'))]
-        except FileNotFoundError:
-            print('No previous clean output found, starting clean inference...')
+        if force_reload:
+            # Delete folders if they already exists
+            shutil.rmtree(self.__fm_folder, ignore_errors=True)
+            shutil.rmtree(self.__clean_output_folder, ignore_errors=True)
+
+            # Create the fm and clean output dir
+            os.makedirs(self.__fm_folder, exist_ok=True)
+            os.makedirs(self.__clean_output_folder, exist_ok=True)
+
+            # Save the intermediate layer
             self.save_intermediate_layer_outputs()
+
+        else:
+            try:
+                self.clean_output = [torch.tensor(tensor, device=self.device)
+                                     for tensor in np.load(self.__clean_output_path, allow_pickle=True)]
+            except FileNotFoundError:
+                print('No previous clean output found, starting clean inference...')
+                self.save_intermediate_layer_outputs()

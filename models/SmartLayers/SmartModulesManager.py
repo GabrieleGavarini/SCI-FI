@@ -14,7 +14,7 @@ from models.SmartLayers.SmartModule import SmartModule
 from models.SmartLayers.utils import get_delayed_start_module_subclass
 
 
-class SmartLayersManager:
+class SmartModulesManager:
 
     def __init__(self,
                  network: Module,
@@ -57,7 +57,7 @@ class SmartLayersManager:
         # If not present, add the costume generate_layer_function, otherwise resort to the module implementation of this
         # function
         if not callable(getattr(self.delayed_start_module, "generate_layer_list", None)):
-            self.delayed_start_module.generate_layer_list = types.MethodType(SmartLayersManager.__generate_layers, self.delayed_start_module)
+            self.delayed_start_module.generate_layer_list = types.MethodType(SmartModulesManager.__generate_layers, self.delayed_start_module)
 
         # Generate the layer list
         self.delayed_start_module.generate_layer_list()
@@ -78,8 +78,18 @@ class SmartLayersManager:
         :return A list of all the new InjectableConv2d
         """
 
-        # Find a list of all the convolutional layers
-        modules_to_replace = [(name, copy.deepcopy(module)) for name, module in self.network.named_modules() if isinstance(module, module_classes)]
+        # Select where to look for the module to replace
+        if self.delayed_start_module is not None:
+            modules_to_replace_parent = self.delayed_start_module
+        else:
+            modules_to_replace_parent = self.network
+
+        # Find a list of all the layers that need to be replaced by a smart module. A layer needs to be replaced if it
+        # is an instance of module_classes and if it is a children of delayed_start_module (or network if it is None).
+        # The name must include all the layers: for this reason the layer must be searched among all the network modules
+        modules_to_replace = [(name, copy.deepcopy(module)) for name, module in self.network.named_modules()
+                              if isinstance(module, module_classes)
+                              and module in modules_to_replace_parent.children()]
 
 
         # Extract the output, input and kernel shape of all the convolutional layers of the network

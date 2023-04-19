@@ -1,12 +1,14 @@
 import os
 import csv
 import math
+import re
+
 import numpy as np
 
 from tqdm import tqdm
 from ast import literal_eval as make_tuple
 
-from typing import Type
+from typing import Type, List, Tuple
 
 from FaultGenerators.WeightFault import WeightFault
 from FaultGenerators.NeurontFault import NeuronFault
@@ -36,6 +38,9 @@ class FaultListGenerator:
         self.module_class = module_class
         self.injectable_module_class = injectable_output_module_class(self.module_class)
 
+        # List of injectable modules. Used only for neurons injection
+        self.injectable_output_modules_list = None
+
         # Create the list of injectable module if the module_class is set
         if self.module_class is not None:
             self.__replace_injectable_output_modules(input_size=input_size)
@@ -51,9 +56,6 @@ class FaultListGenerator:
         # The fault list
         self.fault_list = None
 
-        # List of injectable modules. Used only for neurons injection
-        self.injectable_output_modules_list = None
-
     @staticmethod
     def __compute_date_n(N: int,
                          p: float = 0.5,
@@ -61,13 +63,40 @@ class FaultListGenerator:
                          t: float = 2.58):
         """
         Compute the number of faults to inject according to the DATE09 formula
-        :param N: The total number of parameters
+        :param N: The total number of parameters. If None, compute the infinite population version
         :param p: Default 0.5. The probability of a fault
         :param e: Default 0.01. The desired error rate
         :param t: Default 2.58. The desired confidence level
         :return: the number of fault to inject
         """
-        return N / (1 + e ** 2 * (N - 1) / (t ** 2 * p * (1 - p)))
+        if N is None:
+            return p * (1-p) * t ** 2 / e ** 2
+        else:
+            return N / (1 + e ** 2 * (N - 1) / (t ** 2 * p * (1 - p)))
+
+
+    @staticmethod
+    def __get_list_of_tuples_from_str(string: str,
+                                      element_in_tuple: int = 3) -> List[Tuple]:
+        """
+        Get a list of tuples from a string
+        :param string: The string to convert
+        :param element_in_tuple: How many elements are in a single tuple
+        :return: A list of tuples
+        """
+        return [make_tuple(match[0]) for match in re.findall(f'(\(([0-9]+(, )?){{{element_in_tuple}}}\))', string)]
+
+    @staticmethod
+    def __get_list_from_str(string: str,
+                            cast_type: Type = float) -> List:
+        """
+        Convert a string in a list of elements of type cast_type
+        :param string: The string to convert
+        :param cast_type: The type to cast the elements
+        :return: The list
+        """
+        return [cast_type(entry) for entry in string.replace('[', '').replace(']', '').split(',')]
+
 
 
     def __replace_injectable_output_modules(self,
@@ -124,7 +153,8 @@ class FaultListGenerator:
                               seed: int = 51195,
                               p: float = 0.5,
                               e: float = 0.01,
-                              t: float = 2.58):
+                              t: float = 2.58,
+                              multiple_fault_number: int = 1):
         """
         Generate a fault list for the neurons according to the DATE09 formula
         :param load_fault_list: Default False. Try to load an existing fault list if it exists, otherwise generate it
@@ -133,11 +163,12 @@ class FaultListGenerator:
         :param p: Default 0.5. The probability of a fault
         :param e: Default 0.01. The desired error rate
         :param t: Default 2.58. The desired confidence level
+        :param multiple_fault_number: Default 1. How many faults to inject in a single inference
         :return: The fault list
         """
 
         cwd = os.getcwd()
-        fault_list_filename = f'{cwd}/output/fault_list/{self.network_name}'
+        fault_list_filename = f'{cwd}/output/fault_list/{self.network_name}/multiple_faults_{multiple_fault_number}'
 
         try:
             if load_fault_list:
@@ -148,8 +179,8 @@ class FaultListGenerator:
 
                     fault_list = [NeuronFault(layer_name=str(fault[1]),
                                               layer_index=int(fault[2]),
-                                              feature_map_index=make_tuple(fault[3]),
-                                              value=float(fault[-1])) for fault in fault_list]
+                                              feature_map_indices=self.__get_list_of_tuples_from_str(fault[3]),
+                                              value_list=self.__get_list_from_str(fault[-1])) for fault in fault_list]
 
                 print('Fault list loaded from file')
 
@@ -191,15 +222,23 @@ class FaultListGenerator:
             for layer_index, (n_per_layer, injectable_layer) in enumerate(pbar):
                 for i in range(n_per_layer):
 
-                    channel = random_generator.integers(injectable_layer.output_shape[1])
-                    height = random_generator.integers(injectable_layer.output_shape[2])
-                    width = random_generator.integers(injectable_layer.output_shape[3])
-                    value = random_generator.random() * 2 - 1
+                    feature_map_indices = list()
+                    value_list = list()
+
+                    for _ in range(0, multiple_fault_number):
+
+                        channel = random_generator.integers(injectable_layer.output_shape[1])
+                        height = random_generator.integers(injectable_layer.output_shape[2])
+                        width = random_generator.integers(injectable_layer.output_shape[3])
+                        value = random_generator.random() * 2 - 1
+
+                        feature_map_indices.append((channel, height, width))
+                        value_list.append(value)
 
                     fault_list.append(NeuronFault(layer_name=injectable_layer.layer_name,
                                                   layer_index=layer_index,
-                                                  feature_map_index=(channel, height, width),
-                                                  value=value))
+                                                  feature_map_indices=feature_map_indices,
+                                                  value_list=value_list))
 
             if save_fault_list:
                 os.makedirs(fault_list_filename, exist_ok=True)
@@ -211,7 +250,7 @@ class FaultListGenerator:
                                            'FeatureMapIndex',
                                            'Value'])
                     for index, fault in enumerate(fault_list):
-                        writer_fault.writerow([index, fault.layer_name, fault.layer_index, fault.feature_map_index, fault.value])
+                        writer_fault.writerow([index, fault.layer_name, fault.layer_index, fault.feature_map_indices, fault.value_list])
 
 
             print('Fault List Generated')

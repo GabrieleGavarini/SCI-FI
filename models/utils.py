@@ -1,13 +1,12 @@
 import os
 from functools import reduce
-
 from tqdm import tqdm
 
 import torch
 from torch.nn import Module
 from torch.utils.data import TensorDataset
 from torchvision import transforms
-from torchvision.datasets import CIFAR10, ImageNet
+from torchvision.datasets import CIFAR10, ImageNet, MNIST
 
 
 def get_module_by_name(container_module: Module,
@@ -18,7 +17,6 @@ def get_module_by_name(container_module: Module,
     :param module_name: The name of the module to find
     :return: The instance of the submodule with the specified name
     """
-    module = None
 
     # To fine the actual layer with nested layers (e.g. inside a convolutional layer inside a Basic Block in a
     # ResNet, first separate the layer names using the '.'
@@ -32,7 +30,17 @@ def get_module_by_name(container_module: Module,
 
 def load_ImageNet_validation_set(batch_size,
                                  image_per_class=None,
+                                 network=None,
                                  imagenet_folder='~/Datasets/ImageNet'):
+    """
+
+    :param batch_size:
+    :param image_per_class:
+    :param network: Default None. The network used to select the image per class. If not None, select the image_per_class
+    that maximize this network accuracy. If not specified, images are selected at random
+    :param imagenet_folder:
+    :return:
+    """
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
@@ -62,6 +70,16 @@ def load_ImageNet_validation_set(batch_size,
         if image_per_class is not None:
             selected_validation_list = []
             image_class_counter = [0] * 1000
+
+            # First select only correctly classified images
+            for validation_image in tqdm(validation_dataset, desc='Resizing Imagenet Dataset', colour='Yellow'):
+                if image_class_counter[validation_image[1]] < image_per_class:
+                    prediction = network(validation_image[0].cuda().unsqueeze(dim=0)).argmax() if network is not None else validation_image[1]
+                    if prediction == validation_image[1]:
+                        selected_validation_list.append(validation_image)
+                        image_class_counter[validation_image[1]] += 1
+
+            # Then select images to fill up
             for validation_image in tqdm(validation_dataset, desc='Resizing Imagenet Dataset', colour='Yellow'):
                 if image_class_counter[validation_image[1]] < image_per_class:
                     selected_validation_list.append(validation_image)
@@ -79,6 +97,33 @@ def load_ImageNet_validation_set(batch_size,
     print('Dataset loaded')
 
     return val_loader
+
+
+def load_MNIST_datasets(train_batch_size=32, test_batch_size=1):
+
+    train_loader = torch.utils.data.DataLoader(
+        MNIST('weights/files/', train=True, download=True,
+              transform=transforms.Compose([
+                  transforms.ToTensor(),
+                  transforms.Resize((32, 32)),
+                  transforms.Normalize(
+                      (0.1307,), (0.3081,))
+              ])),
+        batch_size=train_batch_size, shuffle=False)
+
+    test_loader = torch.utils.data.DataLoader(
+        MNIST('weights/files/', train=False, download=True,
+              transform=transforms.Compose([
+                  transforms.ToTensor(),
+                  transforms.Resize((32, 32)),
+                  transforms.Normalize(
+                      (0.1307,), (0.3081,))
+              ])),
+        batch_size=test_batch_size, shuffle=True)
+
+    print('Dataset loaded')
+
+    return train_loader, test_loader
 
 
 def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1, test_image_per_class=None):
