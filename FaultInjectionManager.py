@@ -76,15 +76,16 @@ class FaultInjectionManager:
             self.network(data)
 
 
-    def run_faulty_campaign_on_weight(self,
-                                      fault_model: str,
-                                      fault_list: list,
-                                      fault_dropping: bool = True,
-                                      fault_delayed_start: bool = True,
-                                      delayed_start_module: Module = None,
-                                      first_batch_only: bool = False,
-                                      save_output: bool = False,
-                                      save_feature_maps_statistics: bool = False) -> (str, int):
+    def run_fault_injection_campaign(self,
+                                     fault_model: str,
+                                     fault_list: list,
+                                     fault_dropping: bool = True,
+                                     fault_delayed_start: bool = True,
+                                     delayed_start_module: Module = None,
+                                     golden_ifm_file_extension: str = 'npz',
+                                     first_batch_only: bool = False,
+                                     save_output: bool = False,
+                                     save_feature_maps_statistics: bool = False) -> (str, int):
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
         layer, loading the input feature maps of the previous layer
@@ -96,6 +97,8 @@ class FaultInjectionManager:
         :param delayed_start_module: Default None. If specified, the module where delayed start is enable. If
         fault_delayed_start = True and this is set to None, the module where delayed start is enabled is assumed to be
         the network
+        :param golden_ifm_file_extension: Default 'npz'. The file extension of the file containing the golden ifm loaded
+        when using delayed start and fault dropping techniques
         :param first_batch_only: Default False. Debug parameter, if set run the fault injection campaign on the first
         batch only
         :param save_output: Default False. Whether to save the output of the network or not
@@ -142,13 +145,14 @@ class FaultInjectionManager:
                 if fault_dropping or fault_delayed_start:
                     # Move the corresponding ofm to the gpu
                     for smart_module in self.__smart_modules_list:
-                        smart_module.load_golden(batch_id=batch_id)
+                        smart_module.load_golden(batch_id=batch_id,
+                                                 file_extension=golden_ifm_file_extension)
 
                 # Inject all the faults in a single batch
                 pbar = tqdm(fault_list,
                             colour='green',
                             desc=f'FI on b {batch_id}',
-                            ncols=shutil.get_terminal_size().columns)
+                            ncols=shutil.get_terminal_size().columns * 2)
                 for fault_id, fault in enumerate(pbar):
 
                     # Change the description of the progress bar
@@ -302,7 +306,7 @@ class FaultInjectionManager:
                 # Save the output to file if the option is set
                 if save_output:
                     os.makedirs(f'{self.__faulty_output_folder}/{fault_model}', exist_ok=True)
-                    np.save(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}', self.faulty_output)
+                    np.savez_compressed(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}', self.faulty_output)
                     self.faulty_output = list()
 
                 # TODO: this class shouldn't manage the search of all the instances of AnalyzableConv2d layers
@@ -315,10 +319,10 @@ class FaultInjectionManager:
                         'layer_name': list(),
                         'fault_id': list(),
                         'PSNR': list(),
+                        'SSIM': list(),
                         'euclidean_distance': list(),
                         'max_diff': list(),
-                        'avg_diff': list(),
-                        'num_diff_percentage': list()
+                        'avg_diff': list()
                     }
 
                     for m in self.network.modules():
@@ -329,25 +333,25 @@ class FaultInjectionManager:
                                                                        m.fault_analysis['fault_id']])
                             data_to_save['PSNR'] = np.concatenate([data_to_save['PSNR'],
                                                                    m.fault_analysis['PSNR']])
+                            data_to_save['SSIM'] = np.concatenate([data_to_save['SSIM'],
+                                                                   m.fault_analysis['SSIM']])
                             data_to_save['euclidean_distance'] = np.concatenate([data_to_save['euclidean_distance'],
                                                                                  m.fault_analysis['euclidean_distance']])
                             data_to_save['max_diff'] = np.concatenate([data_to_save['max_diff'],
                                                                        m.fault_analysis['max_diff']])
                             data_to_save['avg_diff'] = np.concatenate([data_to_save['avg_diff'],
                                                                        m.fault_analysis['avg_diff']])
-                            data_to_save['num_diff_percentage'] = np.concatenate([data_to_save['num_diff_percentage'],
-                                                                                  m.fault_analysis['num_diff_percentage']])
                             m.initialize_fault_analysis_dict()
                             m.batch_id += 1
 
                     np.savez(f'{output_dir}/batch_{batch_id}',
                              layer_name=data_to_save['layer_name'],
                              fault_id=data_to_save['fault_id'],
+                             SSIM=data_to_save['SSIM'],
                              PSNR=data_to_save['PSNR'],
                              euclidean_distance=data_to_save['euclidean_distance'],
                              max_diff=data_to_save['max_diff'],
-                             avg_diff=data_to_save['avg_diff'],
-                             num_diff_percentage=data_to_save['num_diff_percentage'])
+                             avg_diff=data_to_save['avg_diff'])
 
                 # End after only one batch if the option is specified
                 if first_batch_only:
@@ -388,7 +392,8 @@ class FaultInjectionManager:
             clean_prediction = torch.topk(self.clean_output[batch_id], k=1)
 
             # Measure the different predictions
-            different_predictions = int(torch.ne(faulty_prediction.values, clean_prediction.values).sum())
+            # different_predictions = int(torch.ne(faulty_prediction.values, clean_prediction.values).sum())
+            different_predictions = int(torch.ne(faulty_prediction.indices, clean_prediction.indices).sum())
 
             faulty_prediction_scores = network_output
             faulty_prediction_indices = [int(fault) for fault in faulty_prediction.indices]
@@ -436,22 +441,29 @@ class FaultInjectionManager:
         :param fault: The fault to inject
         :return: The injected layer
         """
-        output_fault_mask = torch.zeros(size=self.injectable_modules[fault.layer_index].output_shape)
 
+        # Get the target layer
         layer = fault.layer_index
-        channel = fault.feature_map_index[0]
-        height = fault.feature_map_index[1]
-        width = fault.feature_map_index[2]
-        value = fault.value
 
-        # Set values to one for the injected elements
-        output_fault_mask[0, channel, height, width] = 1
+        # Initialize the mask
+        output_fault_mask = torch.zeros(size=self.injectable_modules[layer].output_shape, device=self.device)
+        # Initialize the faulty output
+        output_fault = torch.zeros(size=self.injectable_modules[layer].output_shape, device=self.device)
+
+
+        # Set the fault for each value in the feature map indices list
+        for feature_map_index, feature_map_value in zip(fault.feature_map_indices, fault.value_list):
+            channel = feature_map_index[0]
+            height = feature_map_index[1]
+            width = feature_map_index[2]
+            value = feature_map_value
+
+            # Set values to one for the injected elements
+            output_fault_mask[0, channel, height, width] = 1
+            output_fault[0, channel, height, width] = value
 
         # Cast mask to int and move to device
-        output_fault_mask = output_fault_mask.int().to(self.device)
-
-        # Create a random output
-        output_fault = torch.ones(size=self.injectable_modules[layer].output_shape, device=self.device).mul(value)
+        output_fault_mask = output_fault_mask.int()
 
         # Inject the fault
         self.injectable_modules[layer].inject_fault(output_fault=output_fault,

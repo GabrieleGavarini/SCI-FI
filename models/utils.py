@@ -30,7 +30,17 @@ def get_module_by_name(container_module: Module,
 
 def load_ImageNet_validation_set(batch_size,
                                  image_per_class=None,
+                                 network=None,
                                  imagenet_folder='~/Datasets/ImageNet'):
+    """
+
+    :param batch_size:
+    :param image_per_class:
+    :param network: Default None. The network used to select the image per class. If not None, select the image_per_class
+    that maximize this network accuracy. If not specified, images are selected at random
+    :param imagenet_folder:
+    :return:
+    """
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
@@ -60,6 +70,16 @@ def load_ImageNet_validation_set(batch_size,
         if image_per_class is not None:
             selected_validation_list = []
             image_class_counter = [0] * 1000
+
+            # First select only correctly classified images
+            for validation_image in tqdm(validation_dataset, desc='Resizing Imagenet Dataset', colour='Yellow'):
+                if image_class_counter[validation_image[1]] < image_per_class:
+                    prediction = network(validation_image[0].cuda().unsqueeze(dim=0)).argmax() if network is not None else validation_image[1]
+                    if prediction == validation_image[1]:
+                        selected_validation_list.append(validation_image)
+                        image_class_counter[validation_image[1]] += 1
+
+            # Then select images to fill up
             for validation_image in tqdm(validation_dataset, desc='Resizing Imagenet Dataset', colour='Yellow'):
                 if image_class_counter[validation_image[1]] < image_per_class:
                     selected_validation_list.append(validation_image)

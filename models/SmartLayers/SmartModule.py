@@ -1,5 +1,6 @@
 import pickle
 
+import numpy as np
 import torch
 from torch import Tensor
 from torch.nn import Module
@@ -76,20 +77,27 @@ class SmartModule(Module):
 
 
     def load_golden(self,
-                    batch_id: int) -> None:
+                    batch_id: int,
+                    file_extension: str = 'npz') -> None:
         """
         Load the golden output feature map from disk, store it into GPU or CPU memory
         :param batch_id: The index of the batch currently used for inference
+        :param file_extension: The file extension of the file containing the golden ifm
         """
 
         self.__batch_id = batch_id
 
         # Name of the ifm file
-        ifm_file_name = f'{self.__fm_folder}/ifm_batch_{self.__batch_id}_layer_{self.layer_name}.pt'
+        ifm_file_name = f'{self.__fm_folder}/ifm_batch_{self.__batch_id}_layer_{self.layer_name}.{file_extension}'
 
         # Load the golden ifm
-        with open(ifm_file_name, 'rb') as ifm_file:
-            self.__golden_ifm = pickle.load(ifm_file).to(self.__device)
+        if file_extension == 'pt':
+            with open(ifm_file_name, 'rb') as ifm_file:
+                self.__golden_ifm = pickle.load(ifm_file).to(self.__device)
+        elif file_extension in ['npy', 'npz']:
+            np.load(ifm_file_name)
+        else:
+            raise AttributeError(f'ERROR: Unknown extension {file_extension} to load a golden IFM')
 
     def unload_golden(self) -> None:
         """

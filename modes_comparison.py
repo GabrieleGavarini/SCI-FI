@@ -2,6 +2,8 @@ import copy
 import csv
 import itertools
 import os
+import math
+import numpy as np
 
 import torch
 
@@ -45,7 +47,8 @@ def main(args):
                                            module_classes=module_classes,
                                            device=device,
                                            fm_folder=fm_folder,
-                                           clean_output_folder=clean_output_folder)
+                                           clean_output_folder=clean_output_folder,
+                                           save_compressed=args.save_compressed)
 
     # Try to load the clean input
     ofm_manager.load_clean_output(force_reload=args.force_reload)
@@ -95,9 +98,21 @@ def main(args):
         smart_network = copy.deepcopy(network)
         fault_list_generator.update_network(smart_network)
 
+        # Manage how many fault to inject (in case of faults in the neurons)
+        multiple_fault_number = 1
+        if args.fault_model == 'byzantine_neuron':
+            total_neurons = sum([np.prod(layer.output_shape) for layer in fault_list_generator.injectable_output_modules_list])
+            if args.multiple_fault_number is not None:
+                multiple_fault_number = args.args.multiple_fault_number
+            elif args.multiple_fault_percentage is not None:
+                multiple_fault_number = math.ceil(total_neurons * args.multiple_fault_percentage)
+            print(f'Injecting {multiple_fault_number} faults for each inference - '
+                  f'{multiple_fault_number/total_neurons:.0E}% of {total_neurons} total neurons.')
+
         # Manage the fault models
         clean_fault_list, injectable_modules = get_fault_list(fault_model=args.fault_model,
-                                                              fault_list_generator=fault_list_generator)
+                                                              fault_list_generator=fault_list_generator,
+                                                              multiple_fault_number=multiple_fault_number)
 
         # Create a copy of the fault list, to avoid that consecutive executions create bugs
         fault_list = copy.deepcopy(clean_fault_list)
@@ -135,13 +150,21 @@ def main(args):
                                                          clean_output=ofm_manager.clean_output,
                                                          injectable_modules=injectable_modules)
 
-        elapsed_time, avg_memory_occupation = fault_injection_executor.run_faulty_campaign_on_weight(fault_model=args.fault_model,
-                                                                                                     fault_list=fault_list,
-                                                                                                     fault_dropping=fault_dropping,
-                                                                                                     fault_delayed_start=fault_delayed_start,
-                                                                                                     delayed_start_module=delayed_start_module,
-                                                                                                     first_batch_only=False,
-                                                                                                     save_output=True)
+        # Manage the OFM file extension
+        if args.save_compressed:
+            golden_ifm_file_extension='npz'
+        else:
+            golden_ifm_file_extension='npy'
+
+        # Run the fault injection campaign
+        elapsed_time, avg_memory_occupation = fault_injection_executor.run_fault_injection_campaign(fault_model=args.fault_model,
+                                                                                                    fault_list=fault_list,
+                                                                                                    fault_dropping=fault_dropping,
+                                                                                                    fault_delayed_start=fault_delayed_start,
+                                                                                                    delayed_start_module=delayed_start_module,
+                                                                                                    golden_ifm_file_extension='npz',
+                                                                                                    first_batch_only=True,
+                                                                                                    save_output=True)
 
         if not args.no_log_results:
             os.makedirs('log', exist_ok=True)

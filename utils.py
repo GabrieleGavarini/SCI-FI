@@ -38,6 +38,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Run a fault injection campaign',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
+    # ENV
     parser.add_argument('--forbid-cuda', action='store_true',
                         help='Completely disable the usage of CUDA. This command overrides any other gpu options.')
     parser.add_argument('--use-cuda', action='store_true',
@@ -46,11 +47,10 @@ def parse_args():
                         help='Force the computation of the output feature map.')
     parser.add_argument('--no-log-results', action='store_true',
                         help='Forbid logging the results of the fault injection campaigns')
-    parser.add_argument('--batch-size', '-b', type=int, default=64,
-                        help='Test set batch size')
-    parser.add_argument('--fault-model', '-m', type=str, required=True,
-                        help='The fault model used for the fault injection',
-                        choices=['byzantine_neuron', 'stuck-at_params'])
+    parser.add_argument('--save_compressed', action='store_true',
+                        help='Save OFM as compressed .npz files')
+
+    # NETWORK
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
                         choices=['LeNet5',
@@ -58,20 +58,44 @@ def parse_args():
                                  'ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
                                  'DenseNet121',
                                  'EfficientNet_B0', 'EfficientNet_B4'])
+    parser.add_argument('--batch-size', '-b', type=int, default=64,
+                        help='Test set batch size')
+
+    # FAULT MODEL
+    parser.add_argument('--fault-model', '-m', type=str, required=True,
+                        help='The fault model used for the fault injection',
+                        choices=['byzantine_neuron', 'stuck-at_params'])
+    parser.add_argument('--multiple_fault_number', type=int, default=None,
+                        help='If the fault model is stuck-at params, how many fault to inject in a single inference in'
+                             'absolute number')
+    parser.add_argument('--multiple_fault_percentage', type=float, default=None,
+                        help='If the fault model is stuck-at params, how many fault to inject in a single inference in'
+                             'percentage of the total number of network\'s neurons')
+
+
+    # SMOOTHING
     parser.add_argument('--threshold', type=float, default=0.0,
                         help='The threshold under which an error is undetected')
+    parser.add_argument('--enable_gaussian_filter', action='store_true',
+                        help='Apply the gaussian filter to the ofm to decrease fault impact')
 
     parsed_args = parser.parse_args()
+
+    # Check that only one between multiple_fault_number and multiple_fault_percentage is set
+    if parsed_args.multiple_fault_number is not None and parsed_args.multiple_fault_percentage is not None:
+        print('ERROR: only one between multiple_fault_number and multiple_fault_percentage can be set.')
 
     return parsed_args
 
 
 def get_network(network_name: str,
-                device: torch.device) -> torch.nn.Module:
+                device: torch.device,
+                root: str = '.') -> torch.nn.Module:
     """
     Load the network with the specified name
     :param network_name: The name of the network to load
     :param device: the device where to load the network
+    :param root: the directory where to look for weights
     :return: The loaded network
     """
 
@@ -109,7 +133,7 @@ def get_network(network_name: str,
             network = network_function()
 
             # Load the weights
-            network_path = f'models/pretrained_models/{network_name}.th'
+            network_path = f'{root}/models/pretrained_models/{network_name}.th'
 
             load_from_dict(network=network,
                            device=device,
@@ -124,7 +148,7 @@ def get_network(network_name: str,
         network = LeNet5()
 
         # Load the weights
-        network_path = f'models/pretrained_models/{network_name}.pt'
+        network_path = f'{root}/models/pretrained_models/{network_name}.pt'
 
         load_from_dict(network=network,
                        device=device,
@@ -151,12 +175,15 @@ def get_network(network_name: str,
 
 def get_loader(network_name: str,
                batch_size: int,
-               image_per_class: int = None) -> DataLoader:
+               image_per_class: int = None,
+               network: torch.nn.Module = None) -> DataLoader:
     """
     Return the loader corresponding to a given network and with a specific batch size
     :param network_name: The name of the network
     :param batch_size: The batch size
     :param image_per_class: How many images to load for each class
+    :param network: Default None. The network used to select the image per class. If not None, select the image_per_class
+    that maximize this network accuracy. If not specified, images are selected at random
     :return: The DataLoader
     """
     if 'ResNet' in network_name and network_name not in ['ResNet18', 'ResNet50']:
@@ -168,7 +195,8 @@ def get_loader(network_name: str,
         if image_per_class is None:
             image_per_class = 5
         loader = load_ImageNet_validation_set(batch_size=batch_size,
-                                              image_per_class=image_per_class)
+                                              image_per_class=image_per_class,
+                                              network=network)
 
     print(f'Batch size:\t\t{batch_size} \nNumber of batches:\t{len(loader)}')
 
@@ -226,25 +254,35 @@ def get_module_classes(network_name: str) -> Union[List[type], type]:
 
 
 def get_fault_list(fault_model: str,
-                   fault_list_generator: FaultListGenerator) -> Tuple[Union[List[NeuronFault], List[WeightFault]], List[Module]]:
+                   fault_list_generator: FaultListGenerator,
+                   e: float = .01,
+                   t: float = 2.58,
+                   multiple_fault_number: int = 1) -> Tuple[Union[List[NeuronFault], List[WeightFault]], List[Module]]:
     """
     Get the fault list corresponding to the specific fault model, using the fault list generator passed as argument
     :param fault_model: The name of the fault model
     :param fault_list_generator: An instance of the fault generator
+    :param e: The desired error margin
+    :param t: The t related to the desired confidence level
+    :param multiple_fault_number: Default 1. The number of multiple fault to inject in case of faults in the neurons
     :return: A tuple of fault_list, injectable_modules. The latter is a list of all the modules that can be injected in
     case of neuron fault injections
     """
     if fault_model == 'byzantine_neuron':
         fault_list = fault_list_generator.get_neuron_fault_list(load_fault_list=True,
-                                                                save_fault_list=True)
-        injectable_modules = fault_list_generator.injectable_output_modules_list
-
+                                                                save_fault_list=True,
+                                                                e=e,
+                                                                t=t,
+                                                                multiple_fault_number=multiple_fault_number)
     elif fault_model == 'stuck-at_params':
         fault_list = fault_list_generator.get_weight_fault_list(load_fault_list=True,
-                                                                save_fault_list=True)
-        injectable_modules = None
+                                                                save_fault_list=True,
+                                                                e=e,
+                                                                t=t)
     else:
         raise ValueError(f'Invalid fault model {fault_model}')
+
+    injectable_modules = fault_list_generator.injectable_output_modules_list
 
     return fault_list, injectable_modules
 

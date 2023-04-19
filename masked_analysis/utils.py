@@ -18,9 +18,12 @@ def parse_args():
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
                         choices=['LeNet5',
+                                 'Smooth_ResNet20',
                                  'ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
                                  'DenseNet121',
                                  'EfficientNet'])
+    parser.add_argument('--root_folder', '-r', type=str, default='..',
+                        help='The root folder where to look for the output folder')
 
     parsed_args = parser.parse_args()
 
