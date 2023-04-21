@@ -20,7 +20,8 @@ class OutputFeatureMapsManager:
                  module_classes: Tuple[Type[Module]] or Type[Module],
                  device: torch.device,
                  fm_folder: str,
-                 clean_output_folder: str):
+                 clean_output_folder: str,
+                 save_compressed: bool = False):
         """
         Manges the recording of output feature maps for a given network on a given database
         :param network: The network to analyze
@@ -29,6 +30,7 @@ class OutputFeatureMapsManager:
         :param device: The device where to perform the inference
         :param clean_output_folder: The folder where to load/store the clean output of the network
         :param fm_folder: The folder containing the input and output feature maps
+        :param save_compressed: Default False. Whether to save the ofm compressed
         """
 
         self.network = network
@@ -54,7 +56,8 @@ class OutputFeatureMapsManager:
         # layer
         self.__fm_folder = fm_folder
         os.makedirs(self.__fm_folder, exist_ok=True)
-        self.ifm_paths = [{j: f'./{fm_folder}/ifm_batch_{i}_layer_{j}.pt' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
+        self.ifm_paths = [{j: f'./{fm_folder}/ifm_batch_{i}_layer_{j}' for j in self.feature_maps_layer_names} for i in range(0, len(loader))]
+        self.__save_compressed = save_compressed
 
         # An integer indicating the number of bytes occupied by the Output Feature Maps (without taking into account
         # the overhead required by the lists and the dictionary)
@@ -95,9 +98,13 @@ class OutputFeatureMapsManager:
             input_to_save = in_tensor[0].detach().cpu() if save_to_cpu else in_tensor[0].detach()
             output_to_save = out_tensor.detach().cpu() if save_to_cpu else out_tensor.detach()
 
+            if self.__save_compressed:
+                np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+            else:
+                np.save(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+
             # Save the input feature map
-            with open(self.ifm_paths[batch_id][layer_name], 'wb') as ifm_file:
-                pickle.dump(input_to_save, ifm_file)
+            np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
 
             # Update information about the memory occupation
             self.__input_feature_maps_size += input_to_save.nelement() * input_to_save.element_size()

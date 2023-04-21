@@ -62,7 +62,7 @@ class FaultListGenerator:
                          e: float = 0.01,
                          t: float = 2.58):
         """
-        Compute the number of faults to inject according to the DATE09 formula
+        Compute the number of faults to inject according to the DATE23 formula
         :param N: The total number of parameters. If None, compute the infinite population version
         :param p: Default 0.5. The probability of a fault
         :param e: Default 0.01. The desired error rate

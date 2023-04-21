@@ -47,7 +47,7 @@ def parse_args():
                         help='Force the computation of the output feature map.')
     parser.add_argument('--no-log-results', action='store_true',
                         help='Forbid logging the results of the fault injection campaigns')
-    parser.add_argument('--save_compressed', action='store_true',
+    parser.add_argument('--save-compressed', action='store_true',
                         help='Save OFM as compressed .npz files')
 
     # NETWORK
@@ -76,7 +76,7 @@ def parse_args():
     # SMOOTHING
     parser.add_argument('--threshold', type=float, default=0.0,
                         help='The threshold under which an error is undetected')
-    parser.add_argument('--enable_gaussian_filter', action='store_true',
+    parser.add_argument('--enable-gaussian-filter', action='store_true',
                         help='Apply the gaussian filter to the ofm to decrease fault impact')
 
     parsed_args = parser.parse_args()

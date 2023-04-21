@@ -95,7 +95,15 @@ class SmartModule(Module):
             with open(ifm_file_name, 'rb') as ifm_file:
                 self.__golden_ifm = pickle.load(ifm_file).to(self.__device)
         elif file_extension in ['npy', 'npz']:
-            np.load(ifm_file_name)
+            # Load the numpy file
+            self.__golden_ifm = np.load(ifm_file_name)
+
+            # If it is a numpyz file, then access the sub-element
+            if file_extension == 'npz':
+                self.__golden_ifm = self.__golden_ifm['arr_0']
+
+            # Convert to tensor
+            self.__golden_ifm = torch.tensor(self.__golden_ifm, device=self.__device)
         else:
             raise AttributeError(f'ERROR: Unknown extension {file_extension} to load a golden IFM')
 
