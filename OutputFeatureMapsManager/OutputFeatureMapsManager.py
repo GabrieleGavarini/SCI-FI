@@ -98,13 +98,18 @@ class OutputFeatureMapsManager:
             input_to_save = in_tensor[0].detach().cpu() if save_to_cpu else in_tensor[0].detach()
             output_to_save = out_tensor.detach().cpu() if save_to_cpu else out_tensor.detach()
 
-            if self.__save_compressed:
-                np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
-            else:
-                np.save(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+            # Manage quantized input
+            if input_to_save.dtype == torch.quint8:
+                input_to_save = torch.int_repr(input_to_save)
 
-            # Save the input feature map
-            np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+
+            # if self.__save_compressed:
+            #     np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+            # else:
+            #     np.save(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+            #
+            # # Save the input feature map
+            # np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
 
             # Update information about the memory occupation
             self.__input_feature_maps_size += input_to_save.nelement() * input_to_save.element_size()
@@ -142,10 +147,14 @@ class OutputFeatureMapsManager:
 
         pbar = tqdm(self.loader, colour='green', desc='Saving Feature Maps')
 
+        correct_predictions = 0
+        total_predictions = 0
+
         clean_output_batch_list = list()
         with torch.no_grad():
             for batch_id, batch in enumerate(pbar):
-                data, _ = batch
+                data, label = batch
+                label = label.to(self.device)
                 data = data.to(self.device)
 
                 # Register hooks for current batch
@@ -156,16 +165,22 @@ class OutputFeatureMapsManager:
                                                                                              save_to_cpu=save_to_cpu)))
 
                 # Execute the network and save the clean output
-                clean_output_batch = self.network(data).detach().cpu()
-                clean_output_batch_list.append(clean_output_batch.numpy())
+                clean_output_batch = self.network(data)
+                clean_output_batch_list.append(clean_output_batch.detach().cpu().numpy())
+
+                # Measure the accuracy
+                correct_predictions += torch.sum(clean_output_batch.argmax(dim=1) == label)
+                total_predictions += len(label)
+                accuracy = correct_predictions / total_predictions
+                pbar.set_postfix({'Accuracy': f'{100 * accuracy:.2f}%'})
 
                 # Remove all the hooks
                 self.__remove_all_hooks()
 
         # Save the clean output to file
-        np.save(self.__clean_output_path, clean_output_batch_list)
-        self.clean_output = [torch.tensor(tensor, device=self.device) for tensor in np.load(self.__clean_output_path)]
-        # pickle.dump(self.clean_output, open(self.__clean_output_path, 'wb'))
+        np.save(self.__clean_output_path, np.array(clean_output_batch_list, dtype=object), allow_pickle=True)
+        self.clean_output = [torch.tensor(tensor, device=self.device)
+                             for tensor in np.load(self.__clean_output_path, allow_pickle=True)]
 
         self.input_feature_maps_size = self.__input_feature_maps_size / len(self.loader)
         self.output_feature_maps_size = self.__output_feature_maps_size / len(self.loader)

@@ -12,8 +12,8 @@ def parse_args():
 
     parser.add_argument('--batch-size', '-b', type=int, default=64,
                         help='Test set batch size')
-    parser.add_argument('--fault-model', '-m', type=str, required=True,
-                        help='The fault model used for the fault injection',
+    parser.add_argument('--fault-nas_name', '-m', type=str, required=True,
+                        help='The fault nas_name used for the fault injection',
                         choices=['byzantine_neuron', 'stuck-at_params'])
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',

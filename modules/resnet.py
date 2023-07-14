@@ -6,6 +6,8 @@ import torch.nn.init as init
 
 __all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']
 
+from torch.nn.quantized import FloatFunctional
+
 
 def _weights_init(m):
     classname = m.__class__.__name__
@@ -33,6 +35,8 @@ class BasicBlock(nn.Module):
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
 
+        self.f_add = FloatFunctional()
+
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != planes:
             if option == 'A':
@@ -50,6 +54,7 @@ class BasicBlock(nn.Module):
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
+        # out = self.f_add.add(self.shortcut(x).contiguous(), out)
         out += self.shortcut(x)
         out = F.relu(out)
         return out
@@ -98,7 +103,7 @@ class ResNet(nn.Module):
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = F.avg_pool2d(out, out.size()[3])
+        out = F.avg_pool2d(out, 8)  # TODO: fix this
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out

@@ -1,10 +1,11 @@
+import _csv
 import os
 import argparse
 
 import numpy as np
 import pandas as pd
 
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, TextIO
 
 import torch
 from torch.nn import Sequential, Module
@@ -15,14 +16,14 @@ from torchvision.models import densenet121, DenseNet121_Weights
 from torchvision.models import resnet18, resnet50, ResNet18_Weights, ResNet50_Weights
 from torch.utils.data import DataLoader
 
-import models
+import modules
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 from FaultGenerators.NeurontFault import NeuronFault
 from FaultGenerators.WeightFault import WeightFault
-from models.SmartLayers.SmartModulesManager import SmartModulesManager
-from models.utils import load_from_dict, load_ImageNet_validation_set, load_CIFAR10_datasets, load_MNIST_datasets
-from models.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
-from models.lenet import LeNet5
+from modules.SmartLayers.SmartModulesManager import SmartModulesManager
+from modules.utils import load_from_dict, load_ImageNet_validation_set, load_CIFAR10_datasets, load_MNIST_datasets, load_GTSRB_datasets
+from modules.resnet import resnet20, resnet32, resnet44, resnet56, resnet110, resnet1202
+from modules.lenet import LeNet5
 
 
 class UnknownNetworkException(Exception):
@@ -43,6 +44,8 @@ def parse_args():
                         help='Completely disable the usage of CUDA. This command overrides any other gpu options.')
     parser.add_argument('--use-cuda', action='store_true',
                         help='Use the gpu if available.')
+    parser.add_argument('--cuda-device', type=int, default=0,
+                        help='If the use_cuda, specify the device number')
     parser.add_argument('--force-reload', action='store_true',
                         help='Force the computation of the output feature map.')
     parser.add_argument('--no-log-results', action='store_true',
@@ -53,15 +56,19 @@ def parse_args():
     # NETWORK
     parser.add_argument('--network-name', '-n', type=str,
                         help='Target network',
-                        choices=['LeNet5',
-                                 'ResNet18', 'ResNet50',
+                        choices=['LeNet5', 'LeNet5_MNIST',
+                                 'ResNet18', 'ResNet50', 'ResNet50_GTSRB',
                                  'ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
                                  'DenseNet121',
-                                 'EfficientNet_B0', 'EfficientNet_B4'])
+                                 'EfficientNet_B0', 'EfficientNet_B4', 'EfficientNet_B4_GTSRB'])
     parser.add_argument('--batch-size', '-b', type=int, default=64,
                         help='Test set batch size')
 
     # FAULT MODEL
+    parser.add_argument('--exhaustive', action='store_true',
+                        help='Forbid logging the results of the fault injection campaigns')
+    parser.add_argument('--bit-wise', action='store_true',
+                        help='Inject fault in a bit-wise manner')
     parser.add_argument('--fault-model', '-m', type=str, required=True,
                         help='The fault model used for the fault injection',
                         choices=['byzantine_neuron', 'stuck-at_params'])
@@ -79,6 +86,12 @@ def parse_args():
     parser.add_argument('--enable-gaussian-filter', action='store_true',
                         help='Apply the gaussian filter to the ofm to decrease fault impact')
 
+
+    # QUANTIZATION
+    parser.add_argument('--quantization-dtype', '-q', type=str,
+                        help='The quantization model',
+                        choices=['int8', 'int32', 'float16'])
+
     parsed_args = parser.parse_args()
 
     # Check that only one between multiple_fault_number and multiple_fault_percentage is set
@@ -90,11 +103,13 @@ def parse_args():
 
 def get_network(network_name: str,
                 device: torch.device,
+                load_weights_from_dict: bool = True,
                 root: str = '.') -> torch.nn.Module:
     """
     Load the network with the specified name
     :param network_name: The name of the network to load
     :param device: the device where to load the network
+    :param load_weights_from_dict: Wheteher to load the weights of the network or not
     :param root: the directory where to look for weights
     :return: The loaded network
     """
@@ -112,6 +127,18 @@ def get_network(network_name: str,
 
             # Load the weights
             network = network_function(weights=weights)
+
+        elif network_name == 'ResNet50_GTSRB':
+            network_function = resnet50
+            network = network_function()
+            linear_input_features = list(network.named_children())[-1][1].in_features
+            network.fc = torch.nn.Linear(in_features=linear_input_features, out_features=43, device=device)
+            network_path = f'{root}/modules/pretrained_models/{network_name}.pt'
+
+            if load_weights_from_dict:
+                load_from_dict(network=network,
+                               device=device,
+                               path=network_path)
 
         else:
             if network_name == 'ResNet20':
@@ -133,11 +160,12 @@ def get_network(network_name: str,
             network = network_function()
 
             # Load the weights
-            network_path = f'{root}/models/pretrained_models/{network_name}.th'
+            network_path = f'{root}/modules/pretrained_models/{network_name}.th'
 
-            load_from_dict(network=network,
-                           device=device,
-                           path=network_path)
+            if load_weights_from_dict:
+                load_from_dict(network=network,
+                               device=device,
+                               path=network_path)
     elif 'DenseNet' in network_name:
         if network_name == 'DenseNet121':
             network = densenet121(weights=DenseNet121_Weights.DEFAULT)
@@ -148,20 +176,29 @@ def get_network(network_name: str,
         network = LeNet5()
 
         # Load the weights
-        network_path = f'{root}/models/pretrained_models/{network_name}.pt'
+        network_path = f'{root}/modules/pretrained_models/{network_name}.pt'
 
-        load_from_dict(network=network,
-                       device=device,
-                       path=network_path)
+        if load_weights_from_dict:
+            load_from_dict(network=network,
+                           device=device,
+                           path=network_path)
 
 
     elif 'EfficientNet' in network_name:
-        if network_name == 'EfficientNet_B0':
+        if 'EfficientNet_B0' in network_name:
             network = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
-        elif network_name == 'EfficientNet_B4':
+        elif 'EfficientNet_B4' in network_name:
             network = efficientnet_b4(weights=EfficientNet_B4_Weights.DEFAULT)
         else:
             raise UnknownNetworkException(f'ERROR: unknown network: {network_name}')
+
+        if 'GTSRB' in network_name:
+            linear_input_features = list(network.named_children())[-1][1][1].in_features
+            network.classifier = torch.nn.Linear(in_features=linear_input_features, out_features=43,
+                                                 device=device)
+
+            if load_weights_from_dict:
+                network.load_state_dict(torch.load(f'{root}/modules/pretrained_models/EfficientNet_B4_GTSRB'))
 
     else:
         raise UnknownNetworkException(f'ERROR: unknown network: {network_name}')
@@ -169,6 +206,9 @@ def get_network(network_name: str,
     # Send network to device and set for inference
     network.to(device)
     network.eval()
+
+    if load_weights_from_dict:
+        print('Weights loaded from device')
 
     return network
 
@@ -186,11 +226,13 @@ def get_loader(network_name: str,
     that maximize this network accuracy. If not specified, images are selected at random
     :return: The DataLoader
     """
-    if 'ResNet' in network_name and network_name not in ['ResNet18', 'ResNet50']:
+    if 'ResNet' in network_name and network_name not in ['ResNet18', 'ResNet50', 'ResNet50_GTSRB']:
         _, _, loader = load_CIFAR10_datasets(test_batch_size=batch_size,
                                              test_image_per_class=image_per_class)
     elif 'LeNet' in network_name:
-        _, loader = load_MNIST_datasets(test_batch_size=batch_size)
+        _, _, loader = load_MNIST_datasets(test_batch_size=batch_size)
+    elif 'GTSRB' in network_name:
+        _, _, loader = load_GTSRB_datasets(test_batch_size=batch_size)
     else:
         if image_per_class is None:
             image_per_class = 5
@@ -201,6 +243,25 @@ def get_loader(network_name: str,
     print(f'Batch size:\t\t{batch_size} \nNumber of batches:\t{len(loader)}')
 
     return loader
+
+def get_train_validation_loader_by_name(dataset_name: str,
+                                        batch_size: int) -> (DataLoader, DataLoader):
+    """
+    Return the train and validation dataset
+    :param dataset_name: The name of the dataset
+    :param batch_size: The batch size
+    :return: The train and validation ataLoader
+    """
+
+    if dataset_name == 'GTSRB':
+        train_loader, val_loader, test_loader = load_GTSRB_datasets(train_batch_size=batch_size,
+                                                                    train_split=.8)
+    elif dataset_name == 'MNIST':
+        train_loader, val_loader, test_loader = load_MNIST_datasets()
+    else:
+        raise AttributeError(f'Unknown dataset {dataset_name}')
+
+    return train_loader, val_loader
 
 
 def get_delayed_start_module(network: Module,
@@ -239,10 +300,10 @@ def get_module_classes(network_name: str) -> Union[List[type], type]:
     if 'LeNet' in network_name:
         module_classes = Sequential
     elif 'ResNet' in network_name:
-        if network_name in ['ResNet18', 'ResNet50']:
+        if network_name in ['ResNet18', 'ResNet50', 'ResNet50_GTSRB']:
             module_classes = Sequential
         else:
-            module_classes = models.resnet.BasicBlock
+            module_classes = modules.resnet.BasicBlock
     elif 'DenseNet' in network_name:
         module_classes = (_DenseBlock, _Transition)
     elif 'EfficientNet' in network_name:
@@ -255,44 +316,74 @@ def get_module_classes(network_name: str) -> Union[List[type], type]:
 
 def get_fault_list(fault_model: str,
                    fault_list_generator: FaultListGenerator,
+                   exhaustive: bool = False,
+                   bit_wise: bool = False,
                    e: float = .01,
                    t: float = 2.58,
-                   multiple_fault_number: int = 1) -> Tuple[Union[List[NeuronFault], List[WeightFault]], List[Module]]:
+                   multiple_fault_number: int = None,
+                   multiple_fault_percentage: float = None,
+                   total_neurons: int = None,
+                   ) -> Tuple[_csv.reader, TextIO, int, List[Module]]:
     """
     Get the fault list corresponding to the specific fault model, using the fault list generator passed as argument
     :param fault_model: The name of the fault model
     :param fault_list_generator: An instance of the fault generator
+    :param exhaustive: Default False. Get an exhaustive instead of a statistic one
+    :param bit_wise: Default False. Perform a bit-wise statistical FI to study the criticality of each bit. Only valid
+    for faults in the parameters
     :param e: The desired error margin
     :param t: The t related to the desired confidence level
-    :param multiple_fault_number: Default 1. The number of multiple fault to inject in case of faults in the neurons
-    :return: A tuple of fault_list, injectable_modules. The latter is a list of all the modules that can be injected in
-    case of neuron fault injections
+    :param multiple_fault_number: Default None. The number of multiple fault to inject in case of faults in the neurons
+    :param multiple_fault_percentage: Default None. The percentage of multiple fault to inject in case of faults in the
+     neurons
+    :param total_neurons: Default None. The total number of neurons in the network
+    :return: A tuple of fault_list_reader, fault_list_file, fault_list_length, injectable_modules. The latter is a list
+    of all the modules that can be injected in case of neuron fault injections
     """
+
     if fault_model == 'byzantine_neuron':
-        fault_list = fault_list_generator.get_neuron_fault_list(load_fault_list=True,
-                                                                save_fault_list=True,
-                                                                e=e,
-                                                                t=t,
-                                                                multiple_fault_number=multiple_fault_number)
+
+        # Manage possible attribute errors
+        if multiple_fault_percentage is not None and multiple_fault_number is not None:
+            raise AttributeError('ERROR: Ambiguous fault model specified; both number and percentage of neurons where '
+                                 'specified. Set only one.')
+
+        if multiple_fault_percentage is not None and total_neurons is None:
+            raise AttributeError('ERROR: Impossible to inject a percentage of neurons when the total number of neurons '
+                                 'is not set')
+
+        # Generate the fault list
+        fault_list_reader, fault_list_file, fault_list_length = fault_list_generator.get_neuron_fault_list(load_fault_list=True,
+                                                                                                           save_fault_list=True,
+                                                                                                           exhaustive=exhaustive,
+                                                                                                           e=e,
+                                                                                                           t=t,
+                                                                                                           multiple_fault_number=multiple_fault_number,
+                                                                                                           multiple_fault_percentage=multiple_fault_percentage,
+                                                                                                           total_neurons=total_neurons)
     elif fault_model == 'stuck-at_params':
-        fault_list = fault_list_generator.get_weight_fault_list(load_fault_list=True,
-                                                                save_fault_list=True,
-                                                                e=e,
-                                                                t=t)
+        fault_list_reader, fault_list_file, fault_list_length = fault_list_generator.get_weight_fault_list(load_fault_list=True,
+                                                                                                           save_fault_list=True,
+                                                                                                           exhaustive=exhaustive,
+                                                                                                           bit_wise=bit_wise,
+                                                                                                           e=e,
+                                                                                                           t=t)
     else:
         raise ValueError(f'Invalid fault model {fault_model}')
 
     injectable_modules = fault_list_generator.injectable_output_modules_list
 
-    return fault_list, injectable_modules
+    return fault_list_reader, fault_list_file, fault_list_length, injectable_modules
 
 
 def get_device(forbid_cuda: bool,
-               use_cuda: bool) -> torch.device:
+               use_cuda: bool,
+               cuda_device:int = 0) -> torch.device:
     """
     Get the device where to perform the fault injection
     :param forbid_cuda: Forbids the usage of cuda. Overrides use_cuda
     :param use_cuda: Whether to use the cuda device or the cpu
+    :param cuda_device: Default 0. Specifies the CUDA device if use_cuda is True
     :return: The device where to perform the fault injection
     """
 
@@ -306,7 +397,7 @@ def get_device(forbid_cuda: bool,
     else:
         if use_cuda:
             if torch.cuda.is_available():
-                device = 'cuda'
+                device = f'cuda:{cuda_device}'
             else:
                 device = ''
                 print('ERROR: cuda not available even if use-cuda is set')

@@ -1,10 +1,11 @@
+import _csv
 import csv
 import os
 import shutil
 import time
 import math
 from datetime import timedelta
-import copy
+from ast import literal_eval as make_tuple
 
 import numpy as np
 import torch
@@ -14,14 +15,16 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from FaultGenerators.NeurontFault import NeuronFault
+from FaultGenerators.WeightFault import WeightFault
 from FaultGenerators.WeightFaultInjector import WeightFaultInjector
+from FaultGenerators.utils import get_list_of_tuples_from_str, get_list_from_str
 from masked_analysis.AnalyzableConv2d import AnalyzableConv2d
-from models.SmartLayers.utils import NoChangeOFMException
+from modules.SmartLayers.utils import NoChangeOFMException
 
-from typing import List, Union
+from typing import List, Union, TextIO
 
-from models.SmartLayers.SmartModule import SmartModule
-from models.utils import get_module_by_name
+from modules.SmartLayers.SmartModule import SmartModule
+from modules.utils import get_module_by_name
 
 
 class FaultInjectionManager:
@@ -33,7 +36,11 @@ class FaultInjectionManager:
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
+                 layer_wise: bool = False,
+                 bit_wise: bool = False,
                  injectable_modules: List[Union[Module, List[Module]]] = None):
+
+        assert not (layer_wise and bit_wise)
 
         self.network = network
         self.network_name = network_name
@@ -43,11 +50,22 @@ class FaultInjectionManager:
         self.clean_output = clean_output
         self.faulty_output = list()
 
+        # The folder used to save the labels
+        self.__label_folder = f'output/labels/{self.network_name}/batch_{self.loader.batch_size}'
+
         # The folder used for the logg
         self.__log_folder = f'log/{self.network_name}/batch_{self.loader.batch_size}'
+        if layer_wise:
+            self.__log_folder = f'{self.__log_folder}/layer_wise'
+        elif bit_wise:
+            self.__log_folder = f'{self.__log_folder}/bit_wise'
 
         # The folder where to save the output
         self.__faulty_output_folder = f'output/faulty_output/{self.network_name}/batch_{self.loader.batch_size}'
+        if layer_wise:
+            self.__faulty_output_folder = f'{self.__faulty_output_folder}/layer_wise'
+        if bit_wise:
+            self.__faulty_output_folder = f'{self.__faulty_output_folder}/bit_wise'
 
         # The smart modules in the network
         self.__smart_modules_list = smart_modules_list
@@ -69,28 +87,57 @@ class FaultInjectionManager:
                     desc='Clean Inference',
                     colour='green')
 
+        label_list = list()
+
+        all_correct_num = 0
+        all_sample_num = 0
+
         for batch_id, batch in enumerate(pbar):
-            data, _ = batch
+            data, label = batch
             data = data.to(self.device)
 
-            self.network(data)
+            label_list.append(label.detach().cpu().numpy())
+
+            predict_y = self.network(data).detach()
+
+            predict_label = torch.argmax(predict_y, dim=-1).cpu()
+            current_correct_num = predict_label == label
+            all_correct_num += torch.sum(current_correct_num, dim=-1)
+            all_sample_num += current_correct_num.shape[0]
+            acc = all_correct_num / all_sample_num
+            pbar.set_postfix({'Accuracy': f'{100 * acc:.5f}%'})
+
+        label_list = np.concatenate(label_list)
+
+        os.makedirs(self.__label_folder, exist_ok=True)
+        np.savez_compressed(f'{self.__label_folder}/labels.npz', label_list)
+
 
 
     def run_fault_injection_campaign(self,
                                      fault_model: str,
-                                     fault_list: list,
+                                     fault_list: _csv.reader,
+                                     fault_list_file: TextIO,
+                                     fault_list_length: int,
+                                     exhaustive: bool = False,
                                      fault_dropping: bool = True,
                                      fault_delayed_start: bool = True,
                                      delayed_start_module: Module = None,
                                      golden_ifm_file_extension: str = 'npz',
                                      first_batch_only: bool = False,
                                      save_output: bool = False,
-                                     save_feature_maps_statistics: bool = False) -> (str, int):
+                                     chunk_size:int = None,
+                                     save_feature_maps_statistics: bool = False,
+                                     multiple_fault_number: int = None,
+                                     multiple_fault_percentage: float = None) -> (str, int):
         """
         Run a faulty injection campaign for the network. If a layer name is specified, start the computation from that
         layer, loading the input feature maps of the previous layer
-        :param fault_model: The faut model for the injection
-        :param fault_list: list of fault to inject. One of ['byzantine_neuron', 'stuck-at_params']
+        :param fault_model: The faut nas_name for the injection
+        :param fault_list: the csv file handler indexing the fault list
+        :param fault_list_file: The file handled by fault_list
+        :param fault_list_length: THe number of fault in the fault list
+        :param exhaustive: Default False. Get an exhaustive instead of a statistic one
         :param fault_dropping: Default True. Whether to drop fault or not
         :param fault_delayed_start: Default True. Whether to start the execution from the layer where the faults are
         injected or not
@@ -104,6 +151,10 @@ class FaultInjectionManager:
         :param save_output: Default False. Whether to save the output of the network or not
         :param save_feature_maps_statistics: Default False. Whether to save statistics about the feature maps after the
         fault injection
+        :param multiple_fault_percentage: Default None. If the fault nas_name inject multiple faults for a single inference,
+        the percentage of affected parameters
+        :param multiple_fault_number: Default None. If the fault nas_name inject multiple faults for a single inference,
+        the number of affected parameters
         :return: A tuple formed by : (i) a string containing the formatted time elapsed from the beginning to the end of
         the fault injection campaign, (ii) an integer measuring the average memory occupied (in MB)
         """
@@ -117,11 +168,20 @@ class FaultInjectionManager:
         average_memory_occupation = 0
         total_iterations = 1
 
-        with torch.no_grad():
+        # Initialize and create the log and the output folder
+        if multiple_fault_percentage is not None:
+            multiple_fault_postfix = f'/percentage_{multiple_fault_percentage:.0E}'
+        elif multiple_fault_number is not None:
+            multiple_fault_postfix = f'/number_{multiple_fault_number}'
+        else:
+            multiple_fault_postfix = ''
 
-            # Order the fault list to speed up the injection
-            # This is also important to avoid differences between a
-            fault_list = sorted(fault_list, key=lambda x: x.layer_name)
+        log_folder = f'{self.__log_folder}/{fault_model}/{multiple_fault_postfix}'
+        faulty_output_folder = f'{self.__faulty_output_folder}/{fault_model}/{multiple_fault_postfix}'
+        os.makedirs(faulty_output_folder, exist_ok=True)
+        os.makedirs(log_folder, exist_ok=True)
+
+        with torch.no_grad():
 
             # Start measuring the time elapsed
             start_time = time.time()
@@ -148,20 +208,50 @@ class FaultInjectionManager:
                         smart_module.load_golden(batch_id=batch_id,
                                                  file_extension=golden_ifm_file_extension)
 
+                # Count how many chunks to create
+                if chunk_size is not None:
+                    number_of_chunks = math.ceil(fault_list_length/chunk_size)
+                    print(f'Total number of chunks: {number_of_chunks}')
+
+                # Restart fault list
+                # Read the header
+                fault_list_file.seek(0)
+                _ = next(fault_list)
+
                 # Inject all the faults in a single batch
                 pbar = tqdm(fault_list,
+                            total=fault_list_length,
                             colour='green',
                             desc=f'FI on b {batch_id}',
-                            ncols=shutil.get_terminal_size().columns * 2)
+                            ncols=shutil.get_terminal_size().columns)
                 for fault_id, fault in enumerate(pbar):
 
+                    # Convert the file to the proper object
+                    if 'params' in fault_model:
+                        fault = WeightFault(layer_name=fault[1],
+                                            tensor_index=make_tuple(fault[2]),
+                                            bit=int(fault[-1]))
+                    elif 'neuron' in fault_model:
+                        fault = NeuronFault(layer_name=str(fault[1]),
+                                              layer_index=int(fault[2]),
+                                              feature_map_indices=get_list_of_tuples_from_str(fault[3]),
+                                              value_list=get_list_from_str(fault[-1]))
+                    else:
+                        raise AttributeError(f'Unknown fault nas_name {fault_model}')
+
+                    # Update the fault with the correct name
+                    smart_module_names = [name for name, module in self.network.named_modules() if isinstance(module, SmartModule)]
+                    for smart_module_name in smart_module_names:
+                        if '._SmartModule__module' not in fault.layer_name:
+                            fault.layer_name = fault.layer_name.replace(smart_module_name, f'{smart_module_name}._SmartModule__module')
+
                     # Change the description of the progress bar
-                    if fault_dropping and fault_delayed_start:
-                        pbar.set_description(f'FI (w/ drop & delayed) on b {batch_id}')
-                    elif fault_dropping:
-                        pbar.set_description(f'FI (w/ drop) on b {batch_id}')
-                    elif fault_delayed_start:
-                        pbar.set_description(f'FI (w/ delayed) on b {batch_id}')
+                    # if fault_dropping and fault_delayed_start:
+                    #     pbar.set_description(f'FI (w/ drop & delayed) on b {batch_id}')
+                    # elif fault_dropping:
+                    #     pbar.set_description(f'FI (w/ drop) on b {batch_id}')
+                    # elif fault_delayed_start:
+                    #     pbar.set_description(f'FI (w/ delayed) on b {batch_id}')
 
                     # ------ FAULT  DROPPING ------ #
 
@@ -238,7 +328,7 @@ class FaultInjectionManager:
                     elif fault_model == 'stuck-at_params':
                         self.__inject_fault_on_weight(fault, fault_mode='stuck-at')
                     else:
-                        raise ValueError(f'Invalid fault model {fault_model}')
+                        raise ValueError(f'Invalid fault nas_name {fault_model}')
 
 
                     # TODO: this class shouldn't manage the search of all the instances of AnalyzableConv2d layers
@@ -275,7 +365,18 @@ class FaultInjectionManager:
 
                     # Store the faulty prediction if the option is set
                     if save_output:
-                        self.faulty_output.append(faulty_scores.numpy())
+                        # For the exhaustive, save just some minor values
+                        if exhaustive:
+                            self.faulty_output.append(np.array(faulty_indices))
+                        else:
+                            self.faulty_output.append(faulty_scores.numpy())
+
+                    if save_output and chunk_size is not None:
+                        if fault_id !=0 and fault_id % chunk_size == 0:
+                            chunk_id = math.floor(fault_id/chunk_size)
+                            print(f'Saving chunk {chunk_id}')
+                            np.savez_compressed(f'{faulty_output_folder}/batch_{batch_id}_chunk_{chunk_id}', self.faulty_output)
+                            self.faulty_output = list()
 
                     # Measure the loss in accuracy
                     total_predictions += len(batch[0])
@@ -291,22 +392,20 @@ class FaultInjectionManager:
                     elif fault_model == 'stuck-at_params':
                         self.weight_fault_injector.restore_golden()
                     else:
-                        raise ValueError(f'Invalid fault model {fault_model}')
+                        raise ValueError(f'Invalid fault nas_name {fault_model}')
 
                     # Increment the iteration count
                     total_iterations += 1
 
                 # Log the accuracy of the batch
-                os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
-                log_filename = f'{self.__log_folder}/{fault_model}/batch_{batch_id}.csv'
+                log_filename = f'{log_folder}/batch_{batch_id}.csv'
                 with open(log_filename, 'w') as log_file:
                     log_writer = csv.writer(log_file)
                     log_writer.writerows(accuracy_batch_dict.items())
 
                 # Save the output to file if the option is set
-                if save_output:
-                    os.makedirs(f'{self.__faulty_output_folder}/{fault_model}', exist_ok=True)
-                    np.savez_compressed(f'{self.__faulty_output_folder}/{fault_model}/batch_{batch_id}', self.faulty_output)
+                if save_output and chunk_size is None:
+                    np.savez_compressed(f'{faulty_output_folder}/batch_{batch_id}', self.faulty_output)
                     self.faulty_output = list()
 
                 # TODO: this class shouldn't manage the search of all the instances of AnalyzableConv2d layers
@@ -365,13 +464,12 @@ class FaultInjectionManager:
 
         # Measure the average accuracy
         average_accuracy_dict = dict()
-        for fault_id in range(len(fault_list)):
+        for fault_id in range(fault_list_length):
             fault_accuracy = np.average([accuracy_batch_dict[fault_id] for _, accuracy_batch_dict in accuracy_dict.items()])
             average_accuracy_dict[fault_id] = float(fault_accuracy)
 
         # Final log
-        os.makedirs(f'{self.__log_folder}/{fault_model}', exist_ok=True)
-        log_filename = f'{self.__log_folder}/{fault_model}/all_batches.csv'
+        log_filename = f'{log_folder}/all_batches.csv'
         with open(log_filename, 'w') as log_file:
             log_writer = csv.writer(log_file)
             log_writer.writerows(average_accuracy_dict.items())
@@ -387,7 +485,7 @@ class FaultInjectionManager:
                                  data: torch.Tensor):
         try:
             # Execute the network on the batch
-            network_output = self.network(data)
+            network_output = self.network(data).detach()
             faulty_prediction = torch.topk(network_output, k=1)
             clean_prediction = torch.topk(self.clean_output[batch_id], k=1)
 
@@ -416,7 +514,7 @@ class FaultInjectionManager:
         """
         Inject a fault in one of the weight of the network
         :param fault: The fault to inject
-        :param fault_mode: Default 'stuck-at'. One of either 'stuck-at' or 'bit-flip'. Which kind of fault model to
+        :param fault_mode: Default 'stuck-at'. One of either 'stuck-at' or 'bit-flip'. Which kind of fault nas_name to
         employ
         """
 

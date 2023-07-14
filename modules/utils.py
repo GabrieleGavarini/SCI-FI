@@ -6,7 +6,7 @@ import torch
 from torch.nn import Module
 from torch.utils.data import TensorDataset
 from torchvision import transforms
-from torchvision.datasets import CIFAR10, ImageNet, MNIST
+from torchvision.datasets import CIFAR10, ImageNet, MNIST, GTSRB
 
 
 def get_module_by_name(container_module: Module,
@@ -99,46 +99,110 @@ def load_ImageNet_validation_set(batch_size,
     return val_loader
 
 
-def load_MNIST_datasets(train_batch_size=32, test_batch_size=1):
+def load_MNIST_datasets(train_batch_size=32,  train_split=0.8, test_batch_size=1):
 
-    train_loader = torch.utils.data.DataLoader(
-        MNIST('weights/files/', train=True, download=True,
-              transform=transforms.Compose([
-                  transforms.ToTensor(),
-                  transforms.Resize((32, 32)),
-                  transforms.Normalize(
-                      (0.1307,), (0.3081,))
-              ])),
-        batch_size=train_batch_size, shuffle=False)
+    train_dataset = MNIST('weights/files/', train=True, download=True,
+                          transform=transforms.Compose([
+                              transforms.ToTensor(),
+                              transforms.Resize((32, 32)),
+                              transforms.Normalize((0.1307,), (0.3081,))]))
 
-    test_loader = torch.utils.data.DataLoader(
-        MNIST('weights/files/', train=False, download=True,
-              transform=transforms.Compose([
-                  transforms.ToTensor(),
-                  transforms.Resize((32, 32)),
-                  transforms.Normalize(
-                      (0.1307,), (0.3081,))
-              ])),
-        batch_size=test_batch_size, shuffle=True)
+    test_dataset = MNIST('weights/files/', train=False, download=True,
+                         transform=transforms.Compose([
+                             transforms.ToTensor(),
+                             transforms.Resize((32, 32)),
+                             transforms.Normalize((0.1307,), (0.3081,))
+                        ]))
+
+    # Split the training set into training and validation
+    train_split_length = int(len(train_dataset) * train_split)
+    val_split_length = len(train_dataset) - train_split_length
+    train_subset, val_subset = torch.utils.data.random_split(train_dataset,
+                                                             lengths=[train_split_length, val_split_length],
+                                                             generator=torch.Generator().manual_seed(1234))
+    # DataLoader is used to load the dataset
+    # for training
+    train_loader = torch.utils.data.DataLoader(dataset=train_subset,
+                                               batch_size=train_batch_size,
+                                               shuffle=True)
+    val_loader = torch.utils.data.DataLoader(dataset=val_subset,
+                                             batch_size=train_batch_size,
+                                             shuffle=True)
+
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+                                              batch_size=test_batch_size,
+                                              shuffle=False)
 
     print('Dataset loaded')
 
-    return train_loader, test_loader
+    return train_loader, val_loader, test_loader
 
 
-def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1, test_image_per_class=None):
+def load_GTSRB_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1):
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.3403, 0.3121, 0.3214),
+                             (0.2724, 0.2608, 0.2669))
+    ])
 
-    transform_train = transforms.Compose([
+    train_dataset = GTSRB(root='./data',
+                          split='train',
+                          download=True,
+                          transform=transform)
+    test_dataset = GTSRB(root='./data',
+                         split='test',
+                         download=True,
+                         transform=transform)
+
+    # Split the training set into training and validation
+    train_split_length = int(len(train_dataset) * train_split)
+    val_split_length = len(train_dataset) - train_split_length
+    train_subset, val_subset = torch.utils.data.random_split(train_dataset,
+                                                             lengths=[train_split_length, val_split_length],
+                                                             generator=torch.Generator().manual_seed(1234))
+    # DataLoader is used to load the dataset
+    # for training
+    train_loader = torch.utils.data.DataLoader(dataset=train_subset,
+                                               batch_size=train_batch_size,
+                                               shuffle=True)
+    val_loader = torch.utils.data.DataLoader(dataset=val_subset,
+                                             batch_size=train_batch_size,
+                                             shuffle=True)
+
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+                                              batch_size=test_batch_size,
+                                              shuffle=False)
+
+    print('Dataset loaded')
+
+    return train_loader, val_loader, test_loader
+
+
+def load_CIFAR10_datasets(train_batch_size=32, train_split=0.8, test_batch_size=1, test_image_per_class=None, normalize_input=True):
+
+    # List of transform operations
+    transform_train_list = [
         transforms.RandomCrop(32, padding=4),                                       # Crop the image to 32x32
         transforms.RandomHorizontalFlip(),                                          # Data Augmentation
         transforms.ToTensor(),                                                      # Transform from image to pytorch tensor
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),   # Normalize the data (stability for training)
-    ])
-    transform_test = transforms.Compose([
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))  # Normalize the data (stability for training)
+    ]
+
+    transform_test_list = [
         transforms.CenterCrop(32),                                                  # Crop the image to 32x32
         transforms.ToTensor(),                                                      # Transform from image to pytorch tensor
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),   # Normalize the data (stability for training)
-    ])
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))   # Normalize the data (stability for training)
+    ]
+
+    # If specified, do not normalize the input
+    if not normalize_input:
+        transform_train_list = transform_train_list[:-1]
+        transform_test_list = transform_test_list[:-1]
+
+    # Apply the transformations to the dataset
+    transform_train = transforms.Compose(transform_train_list)
+    transform_test = transforms.Compose(transform_test_list)
 
     train_dataset = CIFAR10('weights/files/',
                             train=True,

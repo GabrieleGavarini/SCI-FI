@@ -2,7 +2,7 @@ class WeightFault:
 
     def __init__(self,
                  layer_name: str,
-                 tensor_index: tuple,
+                 tensor_index: int,
                  bit: int,
                  value: int = None):
         self.layer_name = layer_name

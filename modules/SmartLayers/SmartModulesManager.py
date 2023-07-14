@@ -9,9 +9,9 @@ import torch
 from torch.nn import Module
 
 from FaultGenerators.WeightFault import WeightFault
-from models.SmartLayers.SmartModule import SmartModule
+from modules.SmartLayers.SmartModule import SmartModule
 
-from models.SmartLayers.utils import get_delayed_start_module_subclass
+from modules.SmartLayers.utils import get_delayed_start_module_subclass
 
 
 class SmartModulesManager:
@@ -133,11 +133,12 @@ class SmartModulesManager:
             setattr(container_layer, formatted_names[-1], smart_module)
 
             # Update the fault list with the new name
-            if fault_list is not None:
-                smart_module_name = [name for name, module in self.network.named_modules() if module is smart_module][0]
-                for fault in fault_list:
-                    if '._SmartModule__module' not in fault.layer_name:
-                        fault.layer_name = fault.layer_name.replace(smart_module_name, f'{smart_module_name}._SmartModule__module')
+            # # TODO: move this to the fault injection when selectin the fault layer
+            # if fault_list is not None:
+            #     smart_module_name = [name for name, module in self.network.named_modules() if module is smart_module][0]
+            #     for fault in fault_list:
+            #         if '._SmartModule__module' not in fault.layer_name:
+            #             fault.layer_name = fault.layer_name.replace(smart_module_name, f'{smart_module_name}._SmartModule__module')
 
         # If the network has a layer list, regenerate to update the layers in the list
         if self.delayed_start_module is not None and callable(getattr(self.delayed_start_module, "generate_layer_list", None)):

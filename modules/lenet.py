@@ -1,3 +1,4 @@
+import torch
 from torch.nn import Module
 from torch import nn
 
@@ -25,7 +26,8 @@ class LeNet5(Module):
         y = self.conv2(y)
         y = self.relu2(y)
         y = self.pool2(y)
-        y = y.view(y.shape[0], -1)
+        y = torch.flatten(y, start_dim=1)
+        # y = y.view(y.shape[0], -1)
         y = self.fc1(y)
         y = self.relu3(y)
         y = self.fc2(y)
