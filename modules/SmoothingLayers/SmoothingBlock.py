@@ -1,7 +1,7 @@
 import torch
 from torch.nn import Sequential, BatchNorm2d, Conv2d, ReLU, Hardtanh
-from models.SmoothingLayers.SmoothingLayer import SmoothingLayer
-from models.SmoothingLayers.ReLUn import ReLUn
+from modules.SmoothingLayers.SmoothingLayer import SmoothingLayer
+from modules.SmoothingLayers.ReLUn import ReLUn
 
 
 class SmoothingBlock(Sequential):

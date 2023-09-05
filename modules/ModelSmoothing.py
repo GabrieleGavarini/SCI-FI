@@ -6,10 +6,10 @@ from functools import reduce
 import torch
 from torch.nn import Module, Conv2d, BatchNorm2d, Identity
 
-from models.SmoothingLayers.SmoothingLayer import SmoothingLayer
-from models.SmoothingLayers.SmoothingBlock import SmoothingBlock
+from modules.SmoothingLayers.SmoothingLayer import SmoothingLayer
+from modules.SmoothingLayers.SmoothingBlock import SmoothingBlock
 
-from models.utils import load_from_dict
+from modules.utils import load_from_dict
 
 
 class ModelSmoothing:

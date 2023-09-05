@@ -69,8 +69,8 @@ def main(args):
     fault_delayed_start = True
 
     # Manage the fault models
-    clean_fault_list, injectable_modules = get_fault_list(fault_model=args.fault_model,
-                                                          fault_list_generator=fault_list_generator)
+    clean_fault_list, clean_fault_list_file, clean_fault_list_length, injectable_modules = get_fault_list(fault_model=args.fault_model,
+                                                                                                          fault_list_generator=fault_list_generator)
 
     # Create a copy of the fault list, to avoid that consecutive executions create bugs
     fault_list = copy.deepcopy(clean_fault_list)

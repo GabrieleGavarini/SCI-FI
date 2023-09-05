@@ -9,38 +9,63 @@ import torch
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 from FaultInjectionManager import FaultInjectionManager
 from OutputFeatureMapsManager.OutputFeatureMapsManager import OutputFeatureMapsManager
+from plugins.Quantized.Quantization.PTQNetworkManager import PTQNetworkManager
 from utils import get_network, get_device, parse_args, get_loader, get_module_classes, \
     get_delayed_start_module, enable_optimizations, get_fault_list
 
 
 def main(args):
 
+    if args.quantization_dtype == 'int8':
+        quantization_dtype = torch.qint8
+    elif args.quantization_dtype == 'int32':
+        quantization_dtype = torch.qint32
+    elif args.quantization_dtype == 'float16':
+        quantization_dtype = torch.float16
+    else:
+        raise AttributeError(f'FI not supported for {args.quantization_dtype}')
+
+    #TODO: understand what this does
+    torch.set_num_threads(32)
+
     # Set deterministic algorithms
     torch.use_deterministic_algorithms(mode=True)
 
     # Select the device
-    device = get_device(forbid_cuda=args.forbid_cuda,
-                        use_cuda=args.use_cuda,
-                        cuda_device=args.cuda_device)
+    device = torch.device('cpu')
     print(f'Using device {device}')
 
     # Load the network
     network = get_network(network_name=args.network_name,
-                          device=device)
+                          device=device,
+                          root='../..')
 
     # Load the dataset
     loader = get_loader(network_name=args.network_name,
                         batch_size=args.batch_size)
 
+
+    ptq_manager = PTQNetworkManager(network,
+                                        network_name=args.network_name,
+                                        quantization_type=quantization_dtype,
+                                        quantization_name=args.quantization_dtype,
+                                        calibration_loader=loader,
+                                        device=device)
+
+    # Set the quantized network as the faulty network
+    network = ptq_manager.quantized_network
+
+    network_name = f'{args.network_name}_{args.quantization_dtype}'
+
     # Folder containing the feature maps
-    fm_folder = f'output/feature_maps/{args.network_name}/batch_{args.batch_size}'
+    fm_folder = f'output/feature_maps/{network_name}/batch_{args.batch_size}'
     os.makedirs(fm_folder, exist_ok=True)
 
     # Folder containing the clean output
-    clean_output_folder = f'output/clean_output/{args.network_name}/batch_{args.batch_size}'
+    clean_output_folder = f'output/clean_output/{network_name}/batch_{args.batch_size}'
 
     # Se the module class for the smart operations
-    module_classes = get_module_classes(network_name=args.network_name)
+    module_classes = get_module_classes(network_name=network_name)
 
     ofm_manager = OutputFeatureMapsManager(network=network,
                                            loader=loader,
@@ -53,11 +78,18 @@ def main(args):
     # Try to load the clean input
     ofm_manager.load_clean_output(force_reload=args.force_reload)
 
+    # No clue why I need this...
+    if quantization_dtype == torch.qint8:
+        module_class = [torch.nn.quantized.modules.conv.Conv2d, torch.nn.quantized.modules.linear.Linear]
+    else:
+        module_class = [torch.nn.Conv2d, torch.nn.Linear]
+
     # Generate fault list
     fault_list_generator = FaultListGenerator(network=network,
-                                              network_name=args.network_name,
+                                              network_name=network_name,
                                               device=device,
-                                              module_class=[torch.nn.Conv2d],
+                                              dtype=quantization_dtype,
+                                              module_class= module_class,
                                               input_size=loader.dataset[0][0].unsqueeze(0).shape,
                                               avoid_last_lst_fc_layer=False)
 
@@ -86,7 +118,7 @@ def main(args):
         #     continue
 
         # Only unoptimized FI
-        if fault_delayed_start or fault_dropping:
+        if fault_delayed_start and fault_dropping:
             continue
 
         # Only unoptimized or fully optimized FI
@@ -96,10 +128,7 @@ def main(args):
         # ----- DEBUG ----- #
 
         # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
-        smart_network = copy.deepcopy(network)
-
-        # TODO: this breaks things sometimes, find out why
-        fault_list_generator.update_network(smart_network)
+        smart_network = network
 
         # Manage how many fault to inject (in case of faults in the neurons)
         total_neurons = None
@@ -123,7 +152,7 @@ def main(args):
 
         if fault_delayed_start:
             delayed_start_module = get_delayed_start_module(network=smart_network,
-                                                            network_name=args.network_name)
+                                                            network_name=network_name)
         else:
             delayed_start_module = None
 
@@ -136,7 +165,6 @@ def main(args):
             fm_folder=fm_folder,
             fault_list_generator=fault_list_generator,
             fault_list=fault_list,
-            input_size=loader.dataset[0][0].unsqueeze(0).shape,
             injectable_modules=injectable_modules,
             fault_delayed_start=fault_delayed_start,
             fault_dropping=fault_dropping)
@@ -144,7 +172,7 @@ def main(args):
 
         # Execute the fault injection campaign with the smart network
         fault_injection_executor = FaultInjectionManager(network=smart_network,
-                                                         network_name=args.network_name,
+                                                         network_name=network_name,
                                                          device=device,
                                                          smart_modules_list=smart_modules_list,
                                                          loader=loader,
@@ -178,7 +206,7 @@ def main(args):
 
         if not args.no_log_results:
             os.makedirs('log', exist_ok=True)
-            log_path = f'log/{args.network_name}.csv'
+            log_path = f'log/{network_name}.csv'
             with open(log_path, 'a') as file_log:
                 writer = csv.writer(file_log)
 

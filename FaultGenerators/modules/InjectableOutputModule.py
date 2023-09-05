@@ -68,6 +68,8 @@ def injectable_output_module_class(parent_module):
             """
             self.__output_fault = output_fault
 
+            # self.faulty_function = faulty_function
+
             # The fault mask can be implicitly computed from the fault output
             if output_fault_mask is None:
                 self.__output_fault_mask = self.__output_fault.ne(0).int()
@@ -102,6 +104,7 @@ def injectable_output_module_class(parent_module):
 
             if self.__output_fault_mask is not None:
 
+                # self.faulty_function(input_tensor)
                 masked_output_clean = torch.mul(output_clean, self.__output_clean_mask)
                 masked_output_fault = torch.mul(self.__output_fault, self.__output_fault_mask)
 
