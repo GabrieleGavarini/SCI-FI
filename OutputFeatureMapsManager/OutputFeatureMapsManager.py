@@ -103,13 +103,13 @@ class OutputFeatureMapsManager:
                 input_to_save = torch.int_repr(input_to_save)
 
 
-            # if self.__save_compressed:
-            #     np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
-            # else:
-            #     np.save(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
-            #
-            # # Save the input feature map
-            # np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+            if self.__save_compressed:
+                np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+            else:
+                np.save(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
+
+            # Save the input feature map
+            np.savez_compressed(self.ifm_paths[batch_id][layer_name], input_to_save.numpy())
 
             # Update information about the memory occupation
             self.__input_feature_maps_size += input_to_save.nelement() * input_to_save.element_size()
@@ -158,11 +158,11 @@ class OutputFeatureMapsManager:
                 data = data.to(self.device)
 
                 # Register hooks for current batch
-                for name, module in self.network.named_modules():
-                    if name in self.feature_maps_layer_names:
-                        self.hooks.append(module.register_forward_hook(self.__get_layer_hook(batch_id=batch_id,
-                                                                                             layer_name=name,
-                                                                                             save_to_cpu=save_to_cpu)))
+                # for name, module in self.network.named_modules():
+                #     if name in self.feature_maps_layer_names:
+                #         self.hooks.append(module.register_forward_hook(self.__get_layer_hook(batch_id=batch_id,
+                #                                                                              layer_name=name,
+                #                                                                              save_to_cpu=save_to_cpu)))
 
                 # Execute the network and save the clean output
                 clean_output_batch = self.network(data)

@@ -9,9 +9,8 @@ import torch
 from FaultGenerators.FaultListGenerator import FaultListGenerator
 from FaultInjectionManager import FaultInjectionManager
 from OutputFeatureMapsManager.OutputFeatureMapsManager import OutputFeatureMapsManager
-from utils import get_network, get_device, parse_args, get_loader, get_module_classes, \
-    get_delayed_start_module, enable_optimizations, get_fault_list
-
+from utils.network import get_network, get_loader
+from utils.misc import  get_device, parse_args, get_module_classes, get_delayed_start_module, enable_optimizations, get_fault_list
 
 def main(args):
 
@@ -29,8 +28,9 @@ def main(args):
                           device=device)
 
     # Load the dataset
-    loader = get_loader(network_name=args.network_name,
-                        batch_size=args.batch_size)
+    train_loader, loader = get_loader(network_name=args.network_name,
+                                      batch_size=args.batch_size,
+                                      get_train_loader=False)
 
     # Folder containing the feature maps
     fm_folder = f'output/feature_maps/{args.network_name}/batch_{args.batch_size}'
@@ -96,7 +96,7 @@ def main(args):
         # ----- DEBUG ----- #
 
         # Create a smart network. a copy of the network with its convolutional layers replaced by their smart counterpart
-        smart_network = copy.deepcopy(network)
+        smart_network = network
 
         # TODO: this breaks things sometimes, find out why
         fault_list_generator.update_network(smart_network)
@@ -112,6 +112,8 @@ def main(args):
                                                                                             exhaustive=args.exhaustive,
                                                                                             total_neurons=total_neurons,
                                                                                             bit_wise=args.bit_wise,
+                                                                                            target_layer_index=args.target_layer_index,
+                                                                                            target_layer_n=args.target_layer_n,
                                                                                             e=.01,
                                                                                             t=1.68,
                                                                                             multiple_fault_percentage=args.multiple_fault_percentage,
@@ -148,11 +150,14 @@ def main(args):
                                                          device=device,
                                                          smart_modules_list=smart_modules_list,
                                                          loader=loader,
+                                                         train_loader=train_loader,
                                                          bit_wise=args.bit_wise,
                                                          clean_output=ofm_manager.clean_output,
-                                                         injectable_modules=injectable_modules)
+                                                         injectable_modules=injectable_modules,
+                                                         target_layer_index=args.target_layer_index,
+                                                         target_layer_n=args.target_layer_n)
 
-        fault_injection_executor.run_clean_campaign()
+        fault_injection_executor.run_clean_campaign(on_train=False)
 
         # Manage the OFM file extension
         if args.save_compressed:

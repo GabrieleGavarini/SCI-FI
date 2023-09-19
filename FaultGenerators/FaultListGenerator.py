@@ -363,6 +363,8 @@ class FaultListGenerator:
                               exhaustive: bool = False,
                               layer_wise: bool = False,
                               bit_wise: bool = False,
+                              target_layer_index: int = None,
+                              target_layer_n: int = None,
                               seed=51195,
                               p=0.5,
                               e=0.01,
@@ -374,12 +376,18 @@ class FaultListGenerator:
         :param exhaustive: Default False. Get an exhaustive instead of a statistic one
         :param layer_wise: Default False. Perform a layer-wise statistical FI to study the criticality of each layer
         :param bit_wise: Default False. Perform a bit-wise statistical FI to study the criticality of each bit
+        :param target_layer_index: Default None. If set together with target_layer_n, inject n faults in the specified
+        layer
+        :param target_layer_n: Default None. If set together with target_layer_index, inject n faults in the specified
+        layer
         :param seed: Default 51195. The seed of the fault list
         :param p: Default 0.5. The probability of a fault
         :param e: Default 0.01. The desired error rate
         :param t: Default 2.58. The desired confidence level
         :return: The fault list reader, the fault list file and the length of the fault list
         """
+
+        assert (target_layer_n is not None and target_layer_index is not None) or (target_layer_n is None and target_layer_index is None)
 
         # TODO: move method for retrieving fault list from utils to this class
         # TODO: implement layer wise also for non-NAS
@@ -391,6 +399,8 @@ class FaultListGenerator:
             fault_list_prefix = f'{seed}_layer_wise'
         elif bit_wise:
             fault_list_prefix = f'{seed}_bit_wise'
+        elif target_layer_index is not None and target_layer_n is not None:
+            fault_list_prefix = f'{seed}_layer_{target_layer_index}_n_{target_layer_n}'
         else:
             fault_list_prefix = f'{seed}'
 
@@ -442,6 +452,9 @@ class FaultListGenerator:
                                                                              p=p,
                                                                              t=t,
                                                                              e=e)) for faults in possible_faults_per_layer]
+            elif target_layer_index is not None and target_layer_n is not None:
+                injected_faults_per_layer = [0] * len(possible_faults_per_layer)
+                injected_faults_per_layer[target_layer_index] = target_layer_n
             else:
                 # Compute the total number of fault to inject
                 n = self.__compute_date_n(N=int(total_possible_faults),

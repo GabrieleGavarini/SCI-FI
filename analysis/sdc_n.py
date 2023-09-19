@@ -5,15 +5,19 @@ import os
 import numpy as np
 import torch
 
-NETWORK_NAME = 'LeNet5_MNIST'
+NETWORK_NAME = 'ResNet20'
+# NETWORK_NAME = 'LeNet5_MNIST'
 # NETWORK_NAME = 'LeNet5_MNIST_int8'
 
 OUTPUT_ROOT = '../output'
 # OUTPUT_ROOT = '../plugins/Quantized/output'
 # OUTPUT_ROOT = '../plugins/NAS/output'
 LAYER_WISE = False
-BIT_WISE = True
+BIT_WISE = False
 BIT_ANALYSIS = False
+
+TARGET_LAYER_INDEX = 0
+TARGET_LAYER_N = 100
 
 SPLIT_BY_LAYER = True
 SPLIT_BY_BIT = not SPLIT_BY_LAYER
@@ -38,9 +42,12 @@ def main():
     if LAYER_WISE:
         folder_prefix = "layer_wise/"
         file_prefix = "layer_wise_"
-    if BIT_WISE:
+    elif BIT_WISE:
         folder_prefix = "bit_wise/"
         file_prefix = "bit_wise_"
+    elif TARGET_LAYER_INDEX is not None and TARGET_LAYER_N is not None:
+        folder_prefix = f'layer_{TARGET_LAYER_INDEX}_n_{TARGET_LAYER_N}/'
+        file_prefix = f'layer_{TARGET_LAYER_INDEX}_n_{TARGET_LAYER_N}_'
     else:
         folder_prefix = ''
         file_prefix = ''
@@ -52,6 +59,10 @@ def main():
         analysis_prefix = 'bit_'
     else:
         analysis_prefix = ''
+
+    # Manage target layer fault injection
+    if TARGET_LAYER_INDEX is not None and TARGET_LAYER_N is not None:
+        analysis_prefix = f'target_layer_{TARGET_LAYER_INDEX}_n_{TARGET_LAYER_N}_'
 
     print(f'Analyzing sdc-n of {NETWORK_NAME} with {fault_model} faults')
 
@@ -168,7 +179,7 @@ def main():
     results_dict = dict(sorted(results_dict.items(), reverse=True))
 
     # Add a new entry for the whole network
-    if 'network' not in results_dict.keys():
+    if TARGET_LAYER_INDEX is None and TARGET_LAYER_N is None and 'network' not in results_dict.keys():
         results_dict['network'] = {
             'total_predictions': np.sum([r['total_predictions'] for r in results_dict.values()]),
             'clean_correct_predictions': np.sum([r['clean_correct_predictions'] for r in results_dict.values()]),
@@ -180,7 +191,10 @@ def main():
     with open(f'{analysis_folder}/{analysis_prefix}sdc.csv', 'w') as output_file:
 
         csv_writer = csv.writer(output_file)
-        csv_writer.writerow(['Bit', 'Golden Accuracy', 'SDC_1', 'SDC_5', 'Soft_SDC_5', 'Delta_Accuracy'])
+        header = ['Layer', 'Golden Accuracy', 'SDC_1', 'SDC_5', 'Soft_SDC_5', 'Delta_Accuracy']
+        if SPLIT_BY_BIT:
+            header[0] = 'Bit'
+        csv_writer.writerow(header)
 
         for layer_results in results_dict.items():
             # Get info

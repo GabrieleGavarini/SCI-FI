@@ -1,7 +1,41 @@
+import argparse
 from typing import Tuple
 
 import torch
 import struct
+
+
+def parse_args():
+    """
+    Parse the argument of the network
+    :return: The parsed argument of the network
+    """
+
+    parser = argparse.ArgumentParser(description='Run a fault injection campaign',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    # NETWORK
+    parser.add_argument('--network-name', '-n', type=str,
+                        help='Target network',
+                        choices=['LeNet5', 'LeNet5_MNIST',
+                                 'ResNet18', 'ResNet50', 'ResNet50_GTSRB',
+                                 'ResNet20', 'ResNet32', 'ResNet44', 'ResNet56', 'ResNet110', 'ResNet1202',
+                                 'DenseNet121',
+                                 'EfficientNet_B0', 'EfficientNet_B4', 'EfficientNet_B4_GTSRB'])
+    parser.add_argument('--batch-size', '-b', type=int, default=64,
+                        help='Test set batch size')
+
+    # FAULT MODEL
+    parser.add_argument('--fault-model', '-m', type=str, required=True,
+                        help='The fault model used for the fault injection',
+                        choices=['byzantine_neuron', 'stuck-at_params'])
+    parser.add_argument('--fault_percentage', type=float, default=None,
+                        help='If the fault model is stuck-at params, how many fault to inject in a single inference in'
+                             'percentage of the total number of network\'s neurons')
+
+    parsed_args = parser.parse_args()
+
+    return parsed_args
 
 def int_bit_flip(golden_value,
                  bit) -> Tuple[int, int]:

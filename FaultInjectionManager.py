@@ -36,15 +36,20 @@ class FaultInjectionManager:
                  device: torch.device,
                  loader: DataLoader,
                  clean_output: torch.Tensor,
+                 train_loader: DataLoader = None,
                  layer_wise: bool = False,
                  bit_wise: bool = False,
-                 injectable_modules: List[Union[Module, List[Module]]] = None):
+                 injectable_modules: List[Union[Module, List[Module]]] = None,
+                 target_layer_index: int = None,
+                 target_layer_n: int = None,
+                 ):
 
         assert not (layer_wise and bit_wise)
 
         self.network = network
         self.network_name = network_name
         self.loader = loader
+        self.train_loader = train_loader
         self.device = device
 
         self.clean_output = clean_output
@@ -52,6 +57,7 @@ class FaultInjectionManager:
 
         # The folder used to save the labels
         self.__label_folder = f'output/labels/{self.network_name}/batch_{self.loader.batch_size}'
+        self.__clean_output_folder = f'output/clean_output/{self.network_name}/batch_{self.loader.batch_size}'
 
         # The folder used for the logg
         self.__log_folder = f'log/{self.network_name}/batch_{self.loader.batch_size}'
@@ -59,6 +65,8 @@ class FaultInjectionManager:
             self.__log_folder = f'{self.__log_folder}/layer_wise'
         elif bit_wise:
             self.__log_folder = f'{self.__log_folder}/bit_wise'
+        elif target_layer_n is not None and target_layer_index is not None:
+            self.__log_folder = f'{self.__log_folder}/layer_{target_layer_index}_n_{target_layer_n}'
 
         # The folder where to save the output
         self.__faulty_output_folder = f'output/faulty_output/{self.network_name}/batch_{self.loader.batch_size}'
@@ -66,6 +74,8 @@ class FaultInjectionManager:
             self.__faulty_output_folder = f'{self.__faulty_output_folder}/layer_wise'
         if bit_wise:
             self.__faulty_output_folder = f'{self.__faulty_output_folder}/bit_wise'
+        elif target_layer_n is not None and target_layer_index is not None:
+            self.__faulty_output_folder = f'{self.__faulty_output_folder}/layer_{target_layer_index}_n_{target_layer_n}'
 
         # The smart modules in the network
         self.__smart_modules_list = smart_modules_list
@@ -81,16 +91,25 @@ class FaultInjectionManager:
         self.injectable_modules = injectable_modules
 
 
-    def run_clean_campaign(self):
+    def run_clean_campaign(self, on_train: bool = False):
 
-        pbar = tqdm(self.loader,
-                    desc='Clean Inference',
-                    colour='green')
+        torch.cuda.empty_cache()
+
+        if on_train:
+            pbar = tqdm(self.train_loader,
+                        desc='Clean Inference (training)',
+                        colour='green')
+        else:
+            pbar = tqdm(self.loader,
+                        desc='Clean Inference (test)',
+                        colour='green')
 
         label_list = list()
 
         all_correct_num = 0
         all_sample_num = 0
+
+        clean_output_batch_list = list()
 
         for batch_id, batch in enumerate(pbar):
             data, label = batch
@@ -107,12 +126,18 @@ class FaultInjectionManager:
             acc = all_correct_num / all_sample_num
             pbar.set_postfix({'Accuracy': f'{100 * acc:.5f}%'})
 
+            clean_output_batch_list.append(predict_y.detach().cpu().numpy())
+
+        if self.train_loader is not None:
+            os.makedirs(self.__clean_output_folder, exist_ok=True)
+            np.save(f'{self.__clean_output_folder}/clean_output_train.npy', np.array(clean_output_batch_list, dtype=object), allow_pickle=True)
+
         label_list = np.concatenate(label_list)
 
         os.makedirs(self.__label_folder, exist_ok=True)
         np.savez_compressed(f'{self.__label_folder}/labels.npz', label_list)
 
-
+        torch.cuda.empty_cache()
 
     def run_fault_injection_campaign(self,
                                      fault_model: str,
