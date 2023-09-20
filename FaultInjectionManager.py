@@ -42,6 +42,7 @@ class FaultInjectionManager:
                  injectable_modules: List[Union[Module, List[Module]]] = None,
                  target_layer_index: int = None,
                  target_layer_n: int = None,
+                 target_layer_bit: int = None
                  ):
 
         assert not (layer_wise and bit_wise)
@@ -67,6 +68,8 @@ class FaultInjectionManager:
             self.__log_folder = f'{self.__log_folder}/bit_wise'
         elif target_layer_n is not None and target_layer_index is not None:
             self.__log_folder = f'{self.__log_folder}/layer_{target_layer_index}_n_{target_layer_n}'
+            if target_layer_bit is not None:
+                self.__log_folder = f'{self.__log_folder}_bit_{target_layer_bit}'
 
         # The folder where to save the output
         self.__faulty_output_folder = f'output/faulty_output/{self.network_name}/batch_{self.loader.batch_size}'
@@ -76,6 +79,8 @@ class FaultInjectionManager:
             self.__faulty_output_folder = f'{self.__faulty_output_folder}/bit_wise'
         elif target_layer_n is not None and target_layer_index is not None:
             self.__faulty_output_folder = f'{self.__faulty_output_folder}/layer_{target_layer_index}_n_{target_layer_n}'
+            if target_layer_bit is not None:
+                self.__faulty_output_folder = f'{self.__faulty_output_folder}_bit_{target_layer_bit}'
 
         # The smart modules in the network
         self.__smart_modules_list = smart_modules_list

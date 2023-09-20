@@ -18,6 +18,7 @@ BIT_ANALYSIS = False
 
 TARGET_LAYER_INDEX = 0
 TARGET_LAYER_N = 100
+TARGET_LAYER_BIT = 30
 
 SPLIT_BY_LAYER = True
 SPLIT_BY_BIT = not SPLIT_BY_LAYER
@@ -48,9 +49,13 @@ def main():
     elif TARGET_LAYER_INDEX is not None and TARGET_LAYER_N is not None:
         folder_prefix = f'layer_{TARGET_LAYER_INDEX}_n_{TARGET_LAYER_N}/'
         file_prefix = f'layer_{TARGET_LAYER_INDEX}_n_{TARGET_LAYER_N}_'
+        if TARGET_LAYER_BIT is not None:
+            folder_prefix = f'{folder_prefix[:-1]}_bit_{TARGET_LAYER_BIT}/'
+            file_prefix = f'{file_prefix}bit_{TARGET_LAYER_BIT}_'
     else:
         folder_prefix = ''
         file_prefix = ''
+        raise UserWarning('Unmanaged case')
 
 
     if SPLIT_BY_LAYER:
@@ -63,6 +68,8 @@ def main():
     # Manage target layer fault injection
     if TARGET_LAYER_INDEX is not None and TARGET_LAYER_N is not None:
         analysis_prefix = f'target_layer_{TARGET_LAYER_INDEX}_n_{TARGET_LAYER_N}_'
+        if TARGET_LAYER_BIT is not None:
+            analysis_prefix = f'{analysis_prefix}bit_{TARGET_LAYER_BIT}_'
 
     print(f'Analyzing sdc-n of {NETWORK_NAME} with {fault_model} faults')
 

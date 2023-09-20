@@ -114,6 +114,7 @@ def main(args):
                                                                                             bit_wise=args.bit_wise,
                                                                                             target_layer_index=args.target_layer_index,
                                                                                             target_layer_n=args.target_layer_n,
+                                                                                            target_layer_bit=args.target_layer_bit,
                                                                                             e=.01,
                                                                                             t=1.68,
                                                                                             multiple_fault_percentage=args.multiple_fault_percentage,
@@ -155,7 +156,8 @@ def main(args):
                                                          clean_output=ofm_manager.clean_output,
                                                          injectable_modules=injectable_modules,
                                                          target_layer_index=args.target_layer_index,
-                                                         target_layer_n=args.target_layer_n)
+                                                         target_layer_n=args.target_layer_n,
+                                                         target_layer_bit=args.target_layer_bit)
 
         fault_injection_executor.run_clean_campaign(on_train=False)
 

@@ -72,10 +72,15 @@ def parse_args():
     parser.add_argument('--fault-model', '-m', type=str, required=True,
                         help='The fault model used for the fault injection',
                         choices=['byzantine_neuron', 'stuck-at_params'])
+
     parser.add_argument('--target_layer_index', type=int, default=None,
                         help='If set together with --target-layer-n injected only n faults in the indexed layer')
     parser.add_argument('--target_layer_n', type=int, default=None,
                         help='If set together with --target-layer-index injected only n faults in the indexed layer')
+    parser.add_argument('--target_layer_bit', type=int, default=None,
+                        help='If set together with --target-layer-index and --target-layer-n injected only n faults in '
+                             'the indexed layer in the specified bit')
+
     parser.add_argument('--multiple_fault_number', type=int, default=None,
                         help='If the fault model is stuck-at params, how many fault to inject in a single inference in'
                              'absolute number')
@@ -334,6 +339,7 @@ def get_fault_list(fault_model: str,
                    bit_wise: bool = False,
                    target_layer_index: int = None,
                    target_layer_n: int = None,
+                   target_layer_bit: int = None,
                    e: float = .01,
                    t: float = 2.58,
                    multiple_fault_number: int = None,
@@ -351,6 +357,8 @@ def get_fault_list(fault_model: str,
     layer
     :param target_layer_n: Default None. If set together with target_layer_index, inject n faults in the specified
     layer
+    :param target_layer_bit: Default None. If set together with target_layer_index and target_layer_n, inject n faults
+    in the specified layer in the specified bit position
     :param e: The desired error margin
     :param t: The t related to the desired confidence level
     :param multiple_fault_number: Default None. The number of multiple fault to inject in case of faults in the neurons
@@ -390,6 +398,7 @@ def get_fault_list(fault_model: str,
                                                                                                            bit_wise=bit_wise,
                                                                                                            target_layer_index=target_layer_index,
                                                                                                            target_layer_n=target_layer_n,
+                                                                                                           target_layer_bit=target_layer_bit,
                                                                                                            e=e,
                                                                                                            t=t)
     else:

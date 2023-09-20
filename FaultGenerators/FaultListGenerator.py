@@ -365,6 +365,7 @@ class FaultListGenerator:
                               bit_wise: bool = False,
                               target_layer_index: int = None,
                               target_layer_n: int = None,
+                              target_layer_bit: int = None,
                               seed=51195,
                               p=0.5,
                               e=0.01,
@@ -380,6 +381,8 @@ class FaultListGenerator:
         layer
         :param target_layer_n: Default None. If set together with target_layer_index, inject n faults in the specified
         layer
+        :param target_layer_bit: Default None. If set together with target_layer_index and target_layer_n, inject n
+        faults in the specified layer in the specified bit position
         :param seed: Default 51195. The seed of the fault list
         :param p: Default 0.5. The probability of a fault
         :param e: Default 0.01. The desired error rate
@@ -401,6 +404,8 @@ class FaultListGenerator:
             fault_list_prefix = f'{seed}_bit_wise'
         elif target_layer_index is not None and target_layer_n is not None:
             fault_list_prefix = f'{seed}_layer_{target_layer_index}_n_{target_layer_n}'
+            if target_layer_bit is not None:
+                fault_list_prefix = f'{fault_list_prefix}_bit_{target_layer_bit}'
         else:
             fault_list_prefix = f'{seed}'
 
@@ -491,11 +496,14 @@ class FaultListGenerator:
                         for bit in range(0, self.dtype_bit_width):
 
                             if not bit_wise:
-                                bit = random_generator.integers(0, self.dtype_bit_width)
+                                if target_layer_bit is not None:
+                                    bit = target_layer_bit
+                                else:
+                                    bit = random_generator.integers(0, self.dtype_bit_width)
 
                             fault = WeightFault(layer_name=injectable_layer.layer_name,
-                                                          tensor_index=layer_fault_position,
-                                                          bit=bit)
+                                                tensor_index=layer_fault_position,
+                                                bit=bit)
 
                             # Write the fault
                             if save_fault_list:
