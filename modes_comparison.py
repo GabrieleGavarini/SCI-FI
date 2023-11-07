@@ -57,7 +57,7 @@ def main(args):
     fault_list_generator = FaultListGenerator(network=network,
                                               network_name=args.network_name,
                                               device=device,
-                                              module_class=[torch.nn.Conv2d],
+                                              module_class=[torch.nn.Conv2d, torch.nn.Linear],
                                               input_size=loader.dataset[0][0].unsqueeze(0).shape,
                                               avoid_last_lst_fc_layer=False)
 

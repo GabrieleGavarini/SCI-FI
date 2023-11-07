@@ -487,8 +487,19 @@ class FaultListGenerator:
 
                 for layer_index, (n_per_layer, injectable_layer) in enumerate(pbar):
 
+                    print(f"[DEBUG] Layer Index {layer_index}")
                     weight_size = np.prod(injectable_layer.kernel_shape)
-                    layer_fault_positions = random_generator.choice(range(0, weight_size), n_per_layer, replace=False)
+                    print(f"[DEBUG] Weight size {weight_size}")
+                    print(f"[DEBUG] N per layer {n_per_layer}")
+
+                    # It has been adjusted to avoid that n_per_layer > weight_size and the random_generator enters in exception (the fault list is not generated)
+                    if n_per_layer > weight_size:
+                        replace_value = True
+                    else:
+                        replace_value = False
+
+                    layer_fault_positions = random_generator.choice(range(0, weight_size), n_per_layer, replace=replace_value)
+                    print(f"[DEBUG] Layer fault positions {layer_fault_positions}")
                     layer_fault_positions.sort()
 
                     for layer_fault_position in layer_fault_positions:
